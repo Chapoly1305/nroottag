@@ -1,4 +1,4 @@
-# <img src="images/nRootTag-round.png" alt="nRootTag-round" style="zoom:4%;" /> nRootTag
+# <img src="images/nRootTag-round.png" alt="nRootTag application icon" height=24 width=24 valign=bottom/> nRootTag
 
 **Thank you for visiting, we are still working on improving the readability of this README, stay tuned.**
 
@@ -145,11 +145,11 @@ When rainbow tables don't contain your address, you'll need to initiate a new se
 }
 ```
 
-![add_search_task](images\add_search_task.png)
+![add_search_task](images/add_search_task.png)
 
 By default, the C&C Server will automatically search equivalent prefixes/addresses. If the input is `aabbcc`, it will add the prefixes `2abbcc`, `6abbcc`, and `eabbcc`. This reduce the complexity from 2^48 to 2^46, in another words, 4x performance. Check `2abbcc.dat` to examine the database. Use the `/search-task` API to verify added prefixes, and modify existing ones through `storage.json`.
 
-![search_task](images\search_task.png)
+![search_task](images/search_task.png)
 
 
 # Database
