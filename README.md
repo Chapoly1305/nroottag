@@ -1,14 +1,15 @@
 # <img src="images/nRootTag-round.png" alt="nRootTag application icon" height=24 width=24 valign=bottom/> nRootTag
+[![License: GPL v3](https://img.shields.io/badge/License-GPL%20v3-yellow.svg)](https://www.gnu.org/licenses/gpl-3.0)
+![Languages](https://img.shields.io/badge/Written%20with-CUDA%2FC%2B%2B%2FPython-green)
+![DockerImage](https://img.shields.io/badge/Docker-KeySearch-blue?style=flat&link=https%3A%2F%2Fhub.docker.com%2Frepository%2Fdocker%2Fchiba765%2Fnroottag-seeker)
+![ArtifactRainbowTable](https://img.shields.io/badge/Artifact-RainbowTable-orange)
+![Paper](https://img.shields.io/badge/To%20be%20in%20-%20USENIX%20Security%20'25%20-red?link=https%3A%2F%2Fcs.gmu.edu%2F~zeng%2Fpapers%2F2025-security-nrootgag.pdf)
 
-**Thank you for visiting, we are still working on improving the readability of this README, stay tuned.**
 
 Our work uncovered a vulnerability in the Find My service that permitted all types of BLE addresses for advertising. Leveraging this flaw, we proposed a novel attack method, **nRootTag**, which transformed a computer into an ''AirTag'' tracker without requiring root privilege escalation.
 
 # Table of Contents
-
-
 - [Environment](#environment)
-- [Evaluation Goals](#evaluation-goals)
 - [C&C Server](#cc-server)
   - [Setup C&C Server](#setup-cc-server)
   - [Review API Usage Guide](#review-api-usage-guide)
@@ -43,33 +44,6 @@ The following list shows the system configurations used to construct this readme
 | Trojan - Windows | Hardware: Gigabyte Z690, Bluetooth Adapter [RTL8761B](https://www.amazon.com/Enhanced-Adapter-RTL8761B-Chip-Accessory/dp/B0CBTF5MF2)<br>OS: Windows 11 |
 
 
-# Evaluation Goals
-
-Here is a list of suggested goals and checkpoints for your reference. 
-
-This README document and screen recording under `ScreenRecording` directory for your reference. also aims to present these items.
-
-### C&C Server
-
-- [ ] Setup C&C Server
-- [ ] Review API Usage Guide
-- [ ] Retrieval of a Private Key
-
-### Database
-
-- [ ] Manual Inspection of Rainbow Table
-- [ ] Reconstruct a Public Key
-
-### Seeker
-
-- [ ] Find a Private of a Given OUI of Your Choice
-
-### Trojan
-
-- [ ] Run Trojan on Linux
-- [ ] Run Trojan-Android and exchange address
-
-
 # C&C Server
 
 The Command & Control (C&C) server provides APIs for: Rainbow table construction and querying; Search task distribution; and Public key management.
@@ -78,7 +52,7 @@ The Command & Control (C&C) server provides APIs for: Rainbow table construction
 
 <span style="color:orange">**Warning:**</span> **Execute this program will open port 7898.**
 
-📺 [Screen Recording Available](ScreenRecording/server_db_seeker_trojan_linux.mp4)
+📺 Screen Recording Available: ScreenRecording/server_db_seeker_trojan_linux.mp4
 
 The C&C Server is written in Python and uses several libraries. We provide two methods to set up the environment; either method should work. 
 
@@ -102,7 +76,7 @@ python3 cnc_server.py
 
 ### Review API Usage Guide
 
-📺 [Screen Recording Available](ScreenRecording/server_db_seeker_trojan_linux.mp4), at 1min 15s.
+📺 Screen Recording Available: ScreenRecording/server_db_seeker_trojan_linux.mp4, at 1min 15s.
 
 We provide in-line comments and descriptions for future development. You may review the code in `cnc_server.py`, or use a browser and access [http://localhost:7898/docs](http://localhost:7898/docs) to review available APIs and their usage. We present each API with a description and usage examples.
 
@@ -112,7 +86,7 @@ You may use the "Try it out" feature of each API, and follow the in-line descrip
 
 ### Retrieval of a Private Key
 
-📺 [Screen Recording Available](ScreenRecording/server_db_seeker_trojan_linux.mp4), at 2mins 20s.
+📺 Screen Recording Available: ScreenRecording/server_db_seeker_trojan_linux.mp4, at 2mins 20s.
 
 When looking for a public key for a given address, you can use the `/review-key` API to review the *public key*, private key, and the *base64-encoded SHA256 hashed public key* of that address. For reproduction, click "Try it out," and use the given JSON as input, then click "Execute."
 
@@ -264,7 +238,7 @@ In the screenshot above, you may observe the bottom line showing the status of t
 
 ### Find a Private Key of a Given OUI
 
-📺 [Screen Recording Available](ScreenRecording/server_db_seeker_trojan_linux.mp4), at 3mins.
+📺 Screen Recording Available: ScreenRecording/server_db_seeker_trojan_linux.mp4, at 3mins.
 
 We have two pre-compiled executables ready for use, which are placed under the executables directory. To run them manually and search for a given prefix of your choice,
 
@@ -304,7 +278,7 @@ In our paper, we have mentioned utilizing 200 GPUs to search concurrently. To te
 
 <span style="color:orange">**Warning:**</span> **Execute this program will attempt to enable your Bluetooth.**
 
-📺 [Screen Recording Available](ScreenRecording/server_db_seeker_trojan_linux.mp4), at 7 mins.
+📺 Screen Recording Available: ScreenRecording/server_db_seeker_trojan_linux.mp4, at 7 mins.
 
 To have it working properly, you will need to modify the script and set the address to your host or server IP address. The script is written in python, however, it shall be executed directly in bash. After running the script, it will attempt connect to the C&C server and query for public address that matches this device. A file public_keys.json will be generated with cached public key. You may ignore warning given by GObject.
 
@@ -331,7 +305,7 @@ Our code demonstrates the feasibility of address identification and exchange on 
 
 ### Android
 
-📺 [Screen Recording Available](ScreenRecording/pixel6-pixel4.mp4)
+📺 Screen Recording Available: ScreenRecording/pixel6-pixel4.mp4
 
 You are encouraged to test with Android first for the most reliable reproduction. After installing the APK and start, the program will ask for permissions. Please grant permissions when application asks. You can click "Start Discovery" and observe the address exchanged in seconds, and the counter will increase overtime.
 
@@ -341,7 +315,7 @@ You may use two Android phones to test the exchange feature. The following scree
 
 ### Windows UWP
 
-📺 [Screen Recording Available](ScreenRecording/pixel6-uwp.mp4)
+📺 Screen Recording Available: ScreenRecording/pixel6-uwp.mp4
 
 The following screenshot shows successful exchange between Pixel 6 and Windows 11 UWP.
 
@@ -349,7 +323,7 @@ The following screenshot shows successful exchange between Pixel 6 and Windows 1
 
 ### Windows Win32
 
-📺 [Screen Recording Available](ScreenRecording/pixel6-win32.mp4)
+📺 Screen Recording Available: ScreenRecording/pixel6-win32.mp4
 
 The following screenshot shows successful exchange between Pixel 6 and Windows 11 Win32 Executable.
 
@@ -389,19 +363,11 @@ Report retrieval is not a contribution of this project. We created [Chapoly1305/
 
 We have contacted Apple regarding the vulnerability and attack method. Apple has [acknowledged](https://support.apple.com/en-us/121837#:~:text=for%20their%20assistance.-,Proximity,-We%20would%20like) the issue and implementing fix. This code is for academic research and security analysis only. Use responsibly in controlled test environments.
 
-<img src="images/apple_security_update.png" alt="apple_security_update" width="400"/>
 
-<img src="images/apple_acknowledgement.png" alt="apple_acknowledgement" width="400"/>
+# Research Paper
 
+Please consider sharing and citing our research paper [*Tracking You from a Thousand Miles Away! Turning a Bluetooth Device into an Apple AirTag Without Root Privileges*](https://cs.gmu.edu/~zeng/papers/2025-security-nrootgag.pdf)!
 
-
-
-
-## Research Paper
-
-Please consider sharing and citing our research paper!
-
-*Tracking You from a Thousand Miles Away! Turning a Bluetooth Device into an Apple AirTag Without Root Privileges*
 
 ```
 @inproceedings{chen2025track,
