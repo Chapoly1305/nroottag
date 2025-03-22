@@ -430,6 +430,26 @@ async def insert_data_route(request: InsertRequest):
         raise HTTPException(status_code=500, detail=f"Error inserting data: {str(e)}")
 
 
+def normalize_address(address: str):
+    """
+    Normalize an address by masking the high bits to 0b00.
+
+    Args:
+        address: Hex string address
+
+    Returns:
+        str: Normalized address with high bits set to 0b00
+    """
+    try:
+        address_bytes = bytearray.fromhex(address)
+        # Mask high bits to 00
+        address_bytes[0] &= 0x3F
+        return address_bytes.hex()
+    except Exception as e:
+        logger.error(f"Error normalizing address {address}: {e}")
+        return address  # Return original if error
+
+
 @app.post("/public-key", tags=["Key Retrieval"])
 async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1eadbe112233")):
     """
@@ -450,40 +470,46 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
         if not request.address:
             raise HTTPException(status_code=400, detail="Missing required fields")
 
+        # Normalize the address first (mask high bits to 00)
+        normalized_address = normalize_address(request.address[:12])
+        normalized_prefix = normalized_address[:6]
+        normalized_suffix = normalized_address[6:12]
+
         try:
-            prefix = request.address[:6]
-            suffix = request.address[6:12]
-            suffix_int = int(suffix, 16)
+            suffix_int = int(normalized_suffix, 16)
         except ValueError:
             logger.error(f"Invalid suffix format")
             raise HTTPException(status_code=400, detail="Invalid suffix format")
 
-        # Check if data file exists
-        if not if_dat_exists(prefix):
-            logger.info(f"Key File Not Found: {prefix} {suffix}")
-            await record_unfound_request(prefix, suffix)
-            address_collection = address_mutate(request.address)
+        # Check if normalized data file exists
+        if not if_dat_exists(normalized_prefix):
+            logger.info(
+                f"Key File Not Found: {normalized_prefix} {normalized_suffix} (original: {request.address[:12]})")
+            await record_unfound_request(normalized_prefix, normalized_suffix)
+            # Store original address variants for task list
+            address_collection = address_mutate(request.address[:12])
             for address in address_collection:
                 storage.set(address, "")
             raise HTTPException(status_code=404, detail="Key File Not Found, added for task")
 
-        # Get file handle
-        if prefix not in file_handles:
-            file_handles[prefix] = get_dat_handle(prefix)
-        file_handle = file_handles[prefix]
+        # Get file handle for normalized address
+        if normalized_prefix not in file_handles:
+            file_handles[normalized_prefix] = get_dat_handle(normalized_prefix)
+        file_handle = file_handles[normalized_prefix]
 
         # Read private key
         priv_key = get_value_from_dat(file_handle, suffix_int)
 
         # Check if key exists
         if priv_key == b'\0' * 28:
-            await record_unfound_request(prefix, suffix)
-            address_collection = address_mutate(request.address)
+            await record_unfound_request(normalized_prefix, normalized_suffix)
+            # Store original address variants for task list
+            address_collection = address_mutate(request.address[:12])
             for address in address_collection:
                 storage.set(address, "")
             raise HTTPException(status_code=404, detail="Key Record Not Found, added for task")
 
-        logger.debug(f"Private key: {priv_key.hex()}")
+        logger.debug(f"Private key found: {priv_key.hex()}")
 
         # Generate public key
         try:
