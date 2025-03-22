@@ -23,7 +23,7 @@
 
 The project forms a complete attack chain and depends on each component working together. The setup might be sophisticated, we thank you for your patience. The project contains the following components: **C&C Server**, **Database**, **Seeker**, and **Trojans** for Linux, Windows, and Android, respectively. Each component can be evaluated separately.
 
-📺 We provide screen recordings for essential steps, they are available under **ScreenRecording** directory. Due to size constrain of GitHub, please download the screen recordings from [Zenodo](https://doi.org/10.5281/zenodo.14728530). QuickTime on **macOS** may not play correctly, you can try on alternative video players, such as VLC. 
+📺 We provide screen recordings for essential steps, they are available under **ScreenRecording** directory. Due to size constrain of GitHub, please download the screen recordings from [Zenodo](https://doi.org/10.5281/zenodo.14728530). QuickTime on **macOS** may not play correctly, you can try on alternative video players, such as VLC.
 
 The following list shows the system configurations used to construct this readme guide.
 
@@ -34,6 +34,21 @@ The following list shows the system configurations used to construct this readme
 | Trojan - Linux   | Hardware: Alienware Aurora R5 Desktop<br>OS: Ubuntu 22.04    |
 | Trojan - Android | Hardware: Pixel 6, Pixel 4<br>OS: Android 13, Android 11     |
 | Trojan - Windows | Hardware: Gigabyte Z690, Bluetooth Adapter [RTL8761B](https://www.amazon.com/Enhanced-Adapter-RTL8761B-Chip-Accessory/dp/B0CBTF5MF2)<br>OS: Windows 11 |
+
+
+
+
+🌐All addresses pointed to `localhost` by default.
+
+If you intent to deploy on remote server and expose the port, you will need to change the address. Here is the full list to modify.
+
+| Filename             | HTTP Role | Method                                                       |
+| -------------------- | --------- | ------------------------------------------------------------ |
+| cnc_server.py        | Server    | Update value for `host="localhost"` , e.g., `host="0.0.0.0"` |
+| seeker_standalone.py | Client    | 1. Set environment variable `CNC_SERVER_URL` <br />2. Or, Replace `http://localhost:7898` |
+| trojan_linux.py      | Client    | Update value for `server_addr = "http://localhost:7898"`     |
+| Seeker Docker Image  | Client    | Set `CNC_SERVER_URL`, e.g., https://example.com/             |
+
 
 
 # C&C Server
@@ -204,7 +219,7 @@ The seeker component requires a CUDA-compatible GPU for efficient key search ope
 
 
 ## Compiling
-In Zenodo artifact, we provided precompiled executable files compatible with Ubuntu 22.04 and RTX 4090, however, they may not run on your machine. You may compile using the native CUDA SDK, or compile with Docker. Please refer `executables\nRootTag-Seeker\README.md`. 
+In Zenodo artifact, we provided precompiled executable files compatible with Ubuntu 22.04 and RTX 4090, however, they may not run on your machine. You may compile using the native CUDA SDK, or compile with Docker. Please refer `executables\nRootTag-Seeker\README.md`.
 
 To have cnc_server distribute those executables, you will need to place them under `./executable` folder, and use the name `Seeker_CUDA_12` or `Seeker_CUDA_11`, respectively. To have updated deployable Docker image, follow instruction in the readme and build your own image. If you altered the Seeker code, remember you will need to re-compile and replace all occurrences.
 

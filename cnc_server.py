@@ -1193,4 +1193,4 @@ if __name__ == "__main__":
     print(banner)
 
     # Start FastAPI server
-    uvicorn.run(app, host="0.0.0.0", port=7898, log_level="debug")
+    uvicorn.run(app, host="localhost", port=7898, log_level="debug")
