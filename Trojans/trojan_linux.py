@@ -99,9 +99,17 @@ class AdvertisementObject(Advertisement):
         if self.public_key is None:
             self.add_manufacturer_data(0x004c, [0x12, 0x19, 0x00] + [0] * 24)
         else:
-            pub_part2 = bytearray.fromhex(self.public_key[12:])
-            pub_part3 = bytearray.fromhex(self.public_key[:2])
-            self.add_manufacturer_data(0x004c, [0x12, 0x19, 0x00] + list(pub_part2) + list(pub_part3) + [0x00])
+            # Convert the public key from hex string to bytes
+            pub_key_bytes = bytearray.fromhex(self.public_key)
+            
+            # Extract bytes from position 6 to 28 (equivalent to pub_part2)
+            pub_middle_part = list(pub_key_bytes[6:28]) if len(pub_key_bytes) >= 28 else []
+            
+            # Extract the first 2 bits by right-shifting the first byte by 6
+            first_two_bits = pub_key_bytes[0] >> 6 if pub_key_bytes else 0
+            
+            # Create the advertisement payload with the correct bit placement
+            self.add_manufacturer_data(0x004c, [0x12, 0x19, 0x00] + pub_middle_part + [first_two_bits] + [0x00])
 
     @dbus.service.method(LE_ADVERTISEMENT_IFACE, in_signature='', out_signature='')
     def Release(self):
