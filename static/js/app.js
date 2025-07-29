@@ -127,38 +127,12 @@ async function checkServerStatus() {
         serverStatus = data.continue;
         updateStatusIndicator(serverStatus);
         
-        const toggleBtn = document.getElementById('serverToggle');
-        const toggleText = document.getElementById('serverToggleText');
-        
-        if (serverStatus) {
-            toggleBtn.classList.add('active');
-            toggleText.textContent = 'Server Active';
-        } else {
-            toggleBtn.classList.remove('active');
-            toggleText.textContent = 'Server Stopped';
-        }
     } catch (error) {
         updateStatusIndicator(false, true);
         logToConsole('Failed to check server status: ' + error.message, 'error');
     }
 }
 
-async function toggleServer() {
-    try {
-        const newStatus = !serverStatus;
-        const response = await fetch(`${API_BASE}/status?status=${newStatus}`, {
-            method: 'POST'
-        });
-        
-        if (response.ok) {
-            serverStatus = newStatus;
-            await checkServerStatus();
-            logToConsole(`Server ${newStatus ? 'started' : 'stopped'}`, 'success');
-        }
-    } catch (error) {
-        logToConsole('Failed to toggle server: ' + error.message, 'error');
-    }
-}
 
 // Unified Search Management
 async function handleSearch() {
@@ -685,10 +659,6 @@ async function fetchContainerStatus() {
                     </div>
                 </div>
                 <div class="container-details">
-                    <div class="detail-row">
-                        <span class="detail-label">Group Name:</span>
-                        <span class="detail-value">${group.name || 'N/A'}</span>
-                    </div>
                     <div class="detail-row">
                         <span class="detail-label">Status:</span>
                         <span class="detail-value">${group.status || 'N/A'}</span>

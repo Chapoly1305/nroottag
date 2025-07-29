@@ -254,17 +254,6 @@ header {
     font-size: 1.1rem;
 }
 
-.btn-toggle {
-    background: var(--bg-light);
-    color: var(--text-primary);
-    width: 100%;
-    justify-content: center;
-}
-
-.btn-toggle.active {
-    background: var(--success-color);
-    color: white;
-}
 
 /* Configuration Status */
 .config-status {
