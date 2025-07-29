@@ -639,6 +639,27 @@ async function fetchContainerStatus() {
         
         if (data.success) {
             const group = data.container_group;
+            
+            // Calculate runtime
+            let runtimeText = 'N/A';
+            if (group.current_state?.start_time) {
+                const startTime = new Date(group.current_state.start_time);
+                const endTime = group.current_state.finish_time ? 
+                    new Date(group.current_state.finish_time) : 
+                    new Date();
+                
+                const diffMs = endTime - startTime;
+                const diffMinutes = Math.floor(diffMs / (1000 * 60));
+                const diffHours = Math.floor(diffMinutes / 60);
+                const remainingMinutes = diffMinutes % 60;
+                
+                if (diffHours > 0) {
+                    runtimeText = `${diffHours}h ${remainingMinutes}m`;
+                } else {
+                    runtimeText = `${remainingMinutes}m`;
+                }
+            }
+            
             statusDiv.innerHTML = `
                 <div class="container-stats">
                     <div class="stat-item">
@@ -662,6 +683,10 @@ async function fetchContainerStatus() {
                     <div class="detail-row">
                         <span class="detail-label">Current State:</span>
                         <span class="detail-value">${group.current_state?.status || 'N/A'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Runtime:</span>
+                        <span class="detail-value">${runtimeText}</span>
                     </div>
                 </div>
             `;
