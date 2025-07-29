@@ -648,12 +648,14 @@ async function fetchContainerStatus() {
                     new Date(group.current_state.finish_time) : 
                     new Date();
                 
-                const diffMs = endTime - startTime;
+                const diffMs = Math.abs(endTime - startTime); // Use absolute value to handle timezone issues
                 const diffMinutes = Math.floor(diffMs / (1000 * 60));
                 const diffHours = Math.floor(diffMinutes / 60);
                 const remainingMinutes = diffMinutes % 60;
                 
-                if (diffHours > 0) {
+                if (diffMinutes < 1) {
+                    runtimeText = '<1m';
+                } else if (diffHours > 0) {
                     runtimeText = `${diffHours}h ${remainingMinutes}m`;
                 } else {
                     runtimeText = `${remainingMinutes}m`;
