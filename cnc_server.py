@@ -32,7 +32,7 @@ import multiprocessing as mp
 import requests
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -998,6 +998,79 @@ async def stop_containers(request: SaladCloudRequest):
     except Exception as e:
         logger.error(f"Error stopping containers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error stopping containers")
+
+
+@app.get("/saladcloud-container-status", tags=["Integration"])
+async def get_container_group_status(
+    organization_name: str = Query(..., description="Salad organization name"),
+    project_name: str = Query(..., description="Salad project name"),
+    container_group_name: str = Query(..., description="Container group name"),
+    salad_api_key: str = Query(..., description="Salad API key")
+):
+    """
+    Get the status of a container group and its instances.
+    
+    Returns container group details including instance states.
+    """
+    try:
+        # Get container group details
+        url = f"https://api.salad.com/api/public/organizations/{organization_name}/projects/{project_name}/containers/{container_group_name}"
+        headers = {
+            "accept": "application/json",
+            "Salad-Api-Key": salad_api_key
+        }
+        
+        group_response = requests.get(url, headers=headers)
+        
+        if group_response.status_code != 200:
+            return {
+                "success": False,
+                "message": f"Failed to get container group: HTTP {group_response.status_code}",
+                "error": group_response.text
+            }
+        
+        group_data = group_response.json()
+        
+        # Get container instances
+        instances_url = f"{url}/instances"
+        instances_response = requests.get(instances_url, headers=headers)
+        
+        if instances_response.status_code != 200:
+            return {
+                "success": False,
+                "message": f"Failed to get container instances: HTTP {instances_response.status_code}",
+                "error": instances_response.text
+            }
+        
+        instances_data = instances_response.json()
+        
+        # Count instance states
+        state_counts = {}
+        for instance in instances_data.get("instances", []):
+            state = instance.get("state", "unknown")
+            state_counts[state] = state_counts.get(state, 0) + 1
+        
+        return {
+            "success": True,
+            "container_group": {
+                "name": group_data.get("name"),
+                "status": group_data.get("status"),
+                "replicas": group_data.get("replicas"),
+                "current_state": group_data.get("current_state"),
+                "instance_states": state_counts,
+                "total_instances": len(instances_data.get("instances", [])),
+                "ready_instances": state_counts.get("running", 0),
+                "deploying_instances": state_counts.get("allocating", 0) + state_counts.get("creating", 0),
+                "failed_instances": state_counts.get("failed", 0)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting container status: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error getting container status: {str(e)}"
+        }
 
 
 # Coverage Calculation Functions

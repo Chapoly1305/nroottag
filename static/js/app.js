@@ -24,10 +24,14 @@ async function initializeApp() {
     // Load current tasks
     await loadTasks();
     
+    // Initial container status fetch
+    await fetchContainerStatus();
+    
     // Set up periodic updates
     setInterval(checkServerStatus, 5000);
     setInterval(loadTasks, 2000);
     setInterval(refreshResults, 2000);
+    setInterval(fetchContainerStatus, 10000); // Refresh container status every 10 seconds
     
     logToConsole('System ready', 'success');
 }
@@ -637,3 +641,74 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 });
+
+// Container Status Functions
+async function fetchContainerStatus() {
+    if (!validateSaladConfig()) {
+        const statusDiv = document.getElementById('containerStatus');
+        statusDiv.innerHTML = '<div class="config-status-display"><i class="fas fa-exclamation-triangle"></i> Configuration Required</div>';
+        return;
+    }
+    
+    try {
+        const params = new URLSearchParams({
+            organization_name: saladConfig.orgName,
+            project_name: saladConfig.projectName,
+            container_group_name: saladConfig.containerGroup,
+            salad_api_key: saladToken
+        });
+        
+        const response = await fetch(`${API_BASE}/saladcloud-container-status?${params}`);
+        const data = await response.json();
+        
+        const statusDiv = document.getElementById('containerStatus');
+        
+        if (data.success) {
+            const group = data.container_group;
+            statusDiv.innerHTML = `
+                <div class="container-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">Total</div>
+                        <div class="stat-value">${group.total_instances}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Ready</div>
+                        <div class="stat-value ready">${group.ready_instances}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Deploying</div>
+                        <div class="stat-value deploying">${group.deploying_instances}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Failed</div>
+                        <div class="stat-value failed">${group.failed_instances}</div>
+                    </div>
+                </div>
+                <div class="container-details">
+                    <div class="detail-row">
+                        <span class="detail-label">Group Name:</span>
+                        <span class="detail-value">${group.name || 'N/A'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Status:</span>
+                        <span class="detail-value">${group.status || 'N/A'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Configured Replicas:</span>
+                        <span class="detail-value">${group.replicas || 'N/A'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Current State:</span>
+                        <span class="detail-value">${group.current_state || 'N/A'}</span>
+                    </div>
+                </div>
+            `;
+        } else {
+            statusDiv.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> ${data.message}</div>`;
+        }
+    } catch (error) {
+        const statusDiv = document.getElementById('containerStatus');
+        statusDiv.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> Failed to fetch container status</div>`;
+        logToConsole('Failed to fetch container status: ' + error.message, 'error');
+    }
+}
