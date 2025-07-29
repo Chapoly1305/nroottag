@@ -692,12 +692,40 @@ async function fetchContainerStatus() {
                     </div>
                 </div>
             `;
+            
+            // Update button states based on container status
+            updateContainerButtons(group.current_state?.status);
         } else {
             statusDiv.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> ${data.message}</div>`;
+            updateContainerButtons(null);
         }
     } catch (error) {
         const statusDiv = document.getElementById('containerStatus');
         statusDiv.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> Failed to fetch container status</div>`;
         logToConsole('Failed to fetch container status: ' + error.message, 'error');
+        updateContainerButtons(null);
+    }
+}
+
+function updateContainerButtons(containerStatus) {
+    const startBtn = document.querySelector('button[onclick="startContainers()"]');
+    const stopBtn = document.querySelector('button[onclick="stopContainers()"]');
+    
+    if (!startBtn || !stopBtn) return;
+    
+    // Reset button states
+    startBtn.disabled = false;
+    stopBtn.disabled = false;
+    startBtn.style.opacity = '1';
+    stopBtn.style.opacity = '1';
+    
+    if (containerStatus === 'stopped') {
+        // Containers are stopped - disable stop button
+        stopBtn.disabled = true;
+        stopBtn.style.opacity = '0.5';
+    } else if (containerStatus === 'running' || containerStatus === 'deploying') {
+        // Containers are running/deploying - disable start button
+        startBtn.disabled = true;
+        startBtn.style.opacity = '0.5';
     }
 }
