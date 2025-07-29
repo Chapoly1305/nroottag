@@ -669,7 +669,7 @@ async function fetchContainerStatus() {
                     </div>
                     <div class="detail-row">
                         <span class="detail-label">Current State:</span>
-                        <span class="detail-value">${group.current_state || 'N/A'}</span>
+                        <span class="detail-value">${typeof group.current_state === 'object' ? JSON.stringify(group.current_state) : (group.current_state || 'N/A')}</span>
                     </div>
                 </div>
             `;
