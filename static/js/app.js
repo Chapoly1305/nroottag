@@ -642,7 +642,7 @@ async function fetchContainerStatus() {
             statusDiv.innerHTML = `
                 <div class="container-stats">
                     <div class="stat-item">
-                        <div class="stat-label">Total</div>
+                        <div class="stat-label">Allocated</div>
                         <div class="stat-value">${group.total_instances}</div>
                     </div>
                     <div class="stat-item">
@@ -653,16 +653,8 @@ async function fetchContainerStatus() {
                         <div class="stat-label">Deploying</div>
                         <div class="stat-value deploying">${group.deploying_instances}</div>
                     </div>
-                    <div class="stat-item">
-                        <div class="stat-label">Failed</div>
-                        <div class="stat-value failed">${group.failed_instances}</div>
-                    </div>
                 </div>
                 <div class="container-details">
-                    <div class="detail-row">
-                        <span class="detail-label">Status:</span>
-                        <span class="detail-value">${group.status || 'N/A'}</span>
-                    </div>
                     <div class="detail-row">
                         <span class="detail-label">Configured Replicas:</span>
                         <span class="detail-value">${group.replicas || 'N/A'}</span>
