@@ -26,7 +26,7 @@ async function initializeApp() {
     
     // Set up periodic updates
     setInterval(checkServerStatus, 5000);
-    setInterval(loadTasks, 10000);
+    setInterval(loadTasks, 2000);
     setInterval(refreshResults, 2000);
     
     logToConsole('System ready', 'success');
@@ -458,13 +458,10 @@ async function refreshResults() {
                     try {
                         // Only try to get public key if address is 12 characters
                         if (address.length === 12) {
-                            const prefix = address.substring(0, 6);
-                            const suffix = address.substring(6, 12);
-                            
-                            const pubResponse = await fetch(`${API_BASE}/review-key`, {
+                            const pubResponse = await fetch(`${API_BASE}/public-key`, {
                                 method: 'POST',
                                 headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({prefix: prefix, suffix: suffix})
+                                body: JSON.stringify({address: address})
                             });
                             
                             if (pubResponse.ok) {
