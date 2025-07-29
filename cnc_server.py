@@ -33,7 +33,8 @@ import requests
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 from cryptography.hazmat.backends import default_backend
@@ -57,11 +58,27 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/images", StaticFiles(directory="images"), name="images")
+
+# Add root redirect to dashboard
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root to dashboard."""
+    return RedirectResponse(url="/static/index.html")
+
+# Serve favicon
+@app.get("/nroottag.ico", include_in_schema=False)
+async def favicon():
+    """Serve favicon."""
+    return FileResponse("nroottag.ico")
+
 # Initialize thread-safe queue for batch processing inserts
 insert_queue = queue.Queue()
 
-# Create a manager for sharing file handles between processes
-manager = mp.Manager()
+# Global variables for multiprocessing
+manager = None
 file_handles = {}
 
 # Global configuration
@@ -130,6 +147,16 @@ class ApiKey(BaseModel):
     """
     vastai_api: str
     cnc_server_url: str
+
+
+class SaladCloudRequest(BaseModel):
+    """
+    Request model for Salad Cloud operations.
+    """
+    organization_name: str
+    project_name: str
+    container_group_name: str
+    salad_api_key: str
 
 
 class DeleteRequest(BaseModel):
@@ -859,12 +886,7 @@ async def destroy_instances(vastai_token: str):
 
 
 @app.post("/saladcloud-start-containers", tags=["Integration"])
-async def start_containers(
-        organization_name: str,
-        project_name: str,
-        container_group_name: str,
-        salad_api_key: str,
-):
+async def start_containers(request: SaladCloudRequest):
     """
     Start containers on Saladcloud using their public API.
     
@@ -880,12 +902,12 @@ async def start_containers(
 
     try:
         headers = {
-            'Salad-Api-Key': salad_api_key,
+            'Salad-Api-Key': request.salad_api_key,
             'Content-Type': 'application/json'
         }
 
         base_url = "https://api.salad.com/api/public"
-        start_url = f"{base_url}/organizations/{organization_name}/projects/{project_name}/containers/{container_group_name}/start"
+        start_url = f"{base_url}/organizations/{request.organization_name}/projects/{request.project_name}/containers/{request.container_group_name}/start"
 
         response = requests.post(
             start_url,
@@ -897,11 +919,24 @@ async def start_containers(
                 "message": f"Successfully started containers",
             }
         else:
-            logger.error(f"Failed to start containers: {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Failed to start containers: {response.text}"
-            )
+            error_detail = response.text
+            logger.error(f"Failed to start containers: {error_detail}")
+            
+            # Try to parse JSON error for better user feedback
+            try:
+                error_json = response.json()
+                user_message = error_json.get('detail', error_json.get('title', 'Unknown error'))
+                return {
+                    "success": False,
+                    "message": f"Failed to start containers: {user_message}",
+                    "error_details": error_json
+                }
+            except:
+                return {
+                    "success": False,
+                    "message": f"Failed to start containers: HTTP {response.status_code}",
+                    "error_details": error_detail
+                }
 
     except Exception as e:
         logger.error(f"Error starting containers: {str(e)}")
@@ -909,12 +944,7 @@ async def start_containers(
 
 
 @app.post("/saladcloud-stop-containers", tags=["Integration"])
-async def stop_containers(
-        organization_name: str,
-        project_name: str,
-        container_group_name: str,
-        salad_api_key: str
-):
+async def stop_containers(request: SaladCloudRequest):
     """
     Stop all containers in a container group on Saladcloud.
     
@@ -929,12 +959,12 @@ async def stop_containers(
     """
     try:
         headers = {
-            'Salad-Api-Key': salad_api_key,
+            'Salad-Api-Key': request.salad_api_key,
             'Content-Type': 'application/json'
         }
 
         base_url = "https://api.salad.com/api/public"
-        stop_url = f"{base_url}/organizations/{organization_name}/projects/{project_name}/containers/{container_group_name}/stop"
+        stop_url = f"{base_url}/organizations/{request.organization_name}/projects/{request.project_name}/containers/{request.container_group_name}/stop"
 
         response = requests.post(
             stop_url,
@@ -946,11 +976,24 @@ async def stop_containers(
                 "message": f"Successfully stopped containers",
             }
         else:
-            logger.error(f"Failed to stop containers: {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Failed to stop containers: {response.text}"
-            )
+            error_detail = response.text
+            logger.error(f"Failed to stop containers: {error_detail}")
+            
+            # Try to parse JSON error for better user feedback
+            try:
+                error_json = response.json()
+                user_message = error_json.get('detail', error_json.get('title', 'Unknown error'))
+                return {
+                    "success": False,
+                    "message": f"Failed to stop containers: {user_message}",
+                    "error_details": error_json
+                }
+            except:
+                return {
+                    "success": False,
+                    "message": f"Failed to stop containers: HTTP {response.status_code}",
+                    "error_details": error_detail
+                }
 
     except Exception as e:
         logger.error(f"Error stopping containers: {str(e)}")
@@ -1077,7 +1120,7 @@ async def get_coverage(prefix: str):
 
 
 @app.post("/delete-search-task", tags=["Search Task"])
-async def delete_storage(key: str):
+async def delete_storage(request: DeleteRequest):
     """
     Delete specific storage record or clear all records.
     
@@ -1094,7 +1137,7 @@ async def delete_storage(key: str):
         dict: Status message indicating what was deleted
     """
     try:
-        if key == "*":
+        if request.key == "*":
             # Clear all records
             storage.data.clear()
             storage.save()
@@ -1102,13 +1145,13 @@ async def delete_storage(key: str):
             return {"message": "All storage records cleared successfully"}
 
         # Delete specific key
-        if key in storage.data:
-            del storage.data[key]
+        if request.key in storage.data:
+            del storage.data[request.key]
             storage.save()
-            logger.debug(f"Deleted storage record for key: {key}")
-            return {"message": f"Storage record for key '{key}' deleted successfully"}
+            logger.debug(f"Deleted storage record for key: {request.key}")
+            return {"message": f"Storage record for key '{request.key}' deleted successfully"}
         else:
-            logger.debug(f"Key not found in storage: {key}")
+            logger.debug(f"Key not found in storage: {request.key}")
             return {"message": "Key not found in storage"}
 
     except Exception as e:
@@ -1174,6 +1217,9 @@ async def add_search_task(prefix: PrefixRequest):
 
 # Main Entry Point
 if __name__ == "__main__":
+    # Initialize multiprocessing manager
+    manager = mp.Manager()
+    
     # Start background processing thread
     insert_thread = threading.Thread(target=process_insert_queue, daemon=True)
     insert_thread.start()
