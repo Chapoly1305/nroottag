@@ -304,6 +304,67 @@ def process_insert_queue():
         except Exception as e:
             logger.error(f"Error processing insert request: {e}")
 
+def process_pending_tasks():
+    """
+    Background worker that checks if pending tasks now have keys in data files.
+    Automatically updates storage.json when keys are discovered.
+    """
+    while True:
+        try:
+            # Get all pending tasks (empty entries in storage)
+            candidates = storage.get_empty()
+            if not candidates:
+                time.sleep(10)  # No pending tasks, wait longer
+                continue
+            
+            # Process a batch of pending tasks
+            batch_size = 10  # Process up to 10 tasks per cycle
+            tasks_to_check = list(candidates)[:batch_size]
+            found_count = 0
+            
+            for address in tasks_to_check:
+                try:
+                    # Only process 12-character addresses
+                    if len(address) != 12:
+                        continue
+                        
+                    # Normalize the address (mask high bits)
+                    normalized_address = normalize_address(address)
+                    normalized_prefix = normalized_address[:6]
+                    normalized_suffix = normalized_address[6:12]
+                    suffix_int = int(normalized_suffix, 16)
+                    
+                    # Check if data file exists
+                    if not if_dat_exists(normalized_prefix):
+                        continue  # Data file not available yet
+                    
+                    # Get file handle
+                    if normalized_prefix not in file_handles:
+                        file_handles[normalized_prefix] = get_dat_handle(normalized_prefix)
+                    file_handle = file_handles[normalized_prefix]
+                    
+                    # Check if key exists in data file
+                    priv_key = get_value_from_dat(file_handle, suffix_int)
+                    if priv_key != b'\0' * 28:
+                        # Key found! Update storage
+                        storage.set(address, priv_key.hex())
+                        found_count += 1
+                        logger.info(f"Background scanner found key for {address}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error checking task {address}: {e}")
+                    continue
+            
+            if found_count > 0:
+                logger.info(f"Background scanner completed {found_count} tasks")
+            
+            # Wait before next scan cycle
+            time.sleep(5)  # Scan every 5 seconds
+            
+        except Exception as e:
+            logger.error(f"Error in pending task processor: {e}")
+            time.sleep(10)
+
 
 def insert_data(request: InsertRequest):
     """
@@ -1293,9 +1354,13 @@ if __name__ == "__main__":
     # Initialize multiprocessing manager
     manager = mp.Manager()
     
-    # Start background processing thread
+    # Start background processing threads
     insert_thread = threading.Thread(target=process_insert_queue, daemon=True)
     insert_thread.start()
+    
+    # Start background task scanner thread
+    task_scanner_thread = threading.Thread(target=process_pending_tasks, daemon=True)
+    task_scanner_thread.start()
 
     # Initialize storage
     storage = Storage()

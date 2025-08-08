@@ -298,14 +298,12 @@ header {
 .button-grid {
     display: grid;
     grid-template-columns: repeat(2, 1fr);
-    grid-template-rows: repeat(2, auto);
     gap: 10px;
     margin-top: 15px;
     width: 100%;
     /* Fallback for older browsers */
     display: -webkit-grid;
     -webkit-grid-template-columns: repeat(2, 1fr);
-    -webkit-grid-template-rows: repeat(2, auto);
     -webkit-grid-gap: 10px;
 }
 
@@ -375,11 +373,6 @@ header {
 }
 
 /* Results Container */
-.results-controls {
-    display: flex;
-    gap: 10px;
-    margin-bottom: 20px;
-}
 
 .results-container {
     background: var(--bg-dark);
@@ -593,9 +586,6 @@ header {
         flex-direction: column;
     }
     
-    .results-controls {
-        flex-direction: column;
-    }
     
     header {
         flex-direction: column;

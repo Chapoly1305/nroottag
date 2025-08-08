@@ -27,10 +27,12 @@ async function initializeApp() {
     // Initial container status fetch
     await fetchContainerStatus();
     
+    // Initial search results check
+    await updateSearchResults();
+    
     // Set up periodic updates
     setInterval(checkServerStatus, 5000);
-    setInterval(loadTasks, 2000);
-    setInterval(refreshResults, 2000);
+    setInterval(updateTasksAndResults, 3000); // Unified check for tasks and results every 3 seconds
     setInterval(fetchContainerStatus, 10000); // Refresh container status every 10 seconds
     
     logToConsole('System ready', 'success');
@@ -170,59 +172,6 @@ async function handleSearch() {
     searchInput.value = '';
 }
 
-async function addTaskFromInput() {
-    const searchInput = document.getElementById('searchInput');
-    const input = searchInput.value.trim();
-    
-    if (!input) {
-        showNotification('Please enter a hex string', 'error');
-        return;
-    }
-    
-    if (!/^[0-9a-fA-F]+$/.test(input)) {
-        showNotification('Please enter a valid hex string (0-9, a-f, A-F only)', 'error');
-        return;
-    }
-    
-    if (input.length < 6 || input.length > 12) {
-        showNotification('Please enter 6-12 characters', 'error');
-        return;
-    }
-    
-    let address = input; // Use input exactly as entered
-    
-    try {
-        logToConsole(`Adding task for address: ${address}`, 'info');
-        
-        const response = await fetch(`${API_BASE}/public-key`, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({address: address})
-        });
-        
-        if (response.ok) {
-            const data = await response.json();
-            logToConsole(`Address ${address} found! Public key: ${data.public_key}`, 'success');
-            showNotification('Address already exists! Check console and refresh results.', 'success');
-            await refreshResults();
-        } else if (response.status === 404) {
-            const error = await response.json();
-            logToConsole(`Address ${address} not found, added to search tasks: ${error.detail}`, 'info');
-            showNotification('Address added to search tasks', 'success');
-            await loadTasks();
-        } else {
-            const error = await response.json();
-            logToConsole(`Failed to add task for ${address}: ${error.detail}`, 'error');
-            showNotification('Failed to add task: ' + error.detail, 'error');
-        }
-        
-    } catch (error) {
-        logToConsole('Failed to add task: ' + error.message, 'error');
-        showNotification('Failed to add task', 'error');
-    }
-    
-    searchInput.value = '';
-}
 
 async function addSearchTask(prefix) {
     try {
@@ -256,14 +205,12 @@ async function searchAddress(address) {
         if (response.ok) {
             const data = await response.json();
             logToConsole(`Found public key for ${address}: ${data.public_key}`, 'success');
-            showNotification('Address found! Check Search Results.', 'success');
-            
-            // Refresh results to show the newly saved key
-            await refreshResults();
+            showNotification('Address found! Check console.', 'success');
         } else if (response.status === 404) {
             const error = await response.json();
-            logToConsole(`Address ${address} not found: ${error.detail}`, 'error');
-            showNotification('Address not found in existing data', 'error');
+            logToConsole(`Address ${address} not found, added to search tasks: ${error.detail}`, 'info');
+            showNotification('Address not found - added to search tasks for processing', 'info');
+            await updateTasksAndResults(); // Refresh tasks and results
         } else {
             const error = await response.json();
             logToConsole(`Search failed for ${address}: ${error.detail}`, 'error');
@@ -275,29 +222,6 @@ async function searchAddress(address) {
     }
 }
 
-async function loadTasks() {
-    try {
-        const response = await fetch(`${API_BASE}/search-task`);
-        const text = await response.text();
-        
-        const tasks = text.trim().split('\n').filter(t => t);
-        const taskList = document.getElementById('taskList');
-        
-        if (tasks.length === 0) {
-            taskList.innerHTML = '<div class="loading">No active tasks</div>';
-        } else {
-            taskList.innerHTML = tasks.slice(0, 10).map(task => 
-                `<div class="task-item">${task}</div>`
-            ).join('');
-            
-            if (tasks.length > 10) {
-                taskList.innerHTML += `<div class="task-item">... and ${tasks.length - 10} more</div>`;
-            }
-        }
-    } catch (error) {
-        logToConsole('Failed to load tasks: ' + error.message, 'error');
-    }
-}
 
 async function clearAllTasks() {
     if (!confirm('Are you sure you want to clear all search tasks?')) {
@@ -312,7 +236,7 @@ async function clearAllTasks() {
         });
         
         if (response.ok) {
-            await loadTasks();
+            await updateTasksAndResults();
             logToConsole('All search tasks cleared', 'success');
             showNotification('All tasks cleared successfully', 'success');
         } else {
@@ -324,23 +248,6 @@ async function clearAllTasks() {
     }
 }
 
-async function viewTasks() {
-    try {
-        const response = await fetch(`${API_BASE}/search-task`);
-        const text = await response.text();
-        
-        const tasks = text.trim().split('\n').filter(t => t);
-        const modalTaskList = document.getElementById('modalTaskList');
-        
-        modalTaskList.innerHTML = tasks.map(task => 
-            `<div class="task-item">${task}</div>`
-        ).join('');
-        
-        document.getElementById('taskModal').style.display = 'block';
-    } catch (error) {
-        logToConsole('Failed to load tasks: ' + error.message, 'error');
-    }
-}
 
 // Salad Cloud Control
 async function startContainers() {
@@ -417,22 +324,41 @@ async function stopContainers() {
     }
 }
 
-// Results Management
-async function refreshResults() {
+
+
+// Unified Tasks and Results Management
+async function updateTasksAndResults() {
     try {
+        // Get updated storage data (server-side background scanner handles key discovery)
         const response = await fetch(`${API_BASE}/review-storage`);
         const data = await response.json();
         
-        const resultsContainer = document.getElementById('resultsContainer');
         const entries = Object.entries(data);
-        const validEntries = entries.filter(([address, key]) => key && key !== '').reverse();
+        const pendingTasks = entries.filter(([address, key]) => !key || key === '').map(([address, key]) => address);
+        const completedResults = entries.filter(([address, key]) => key && key !== '').reverse();
         
-        if (validEntries.length === 0) {
-            resultsContainer.innerHTML = '<div class="loading">No results found</div>';
+        // Update Current Tasks section
+        const taskList = document.getElementById('taskList');
+        if (pendingTasks.length === 0) {
+            taskList.innerHTML = '<div class="loading">No active tasks</div>';
+        } else {
+            taskList.innerHTML = pendingTasks.slice(0, 10).map(task => 
+                `<div class="task-item">${task}</div>`
+            ).join('');
+            
+            if (pendingTasks.length > 10) {
+                taskList.innerHTML += `<div class="task-item">... and ${pendingTasks.length - 10} more</div>`;
+            }
+        }
+        
+        // Update Search Results section
+        const resultsContainer = document.getElementById('resultsContainer');
+        if (completedResults.length === 0) {
+            resultsContainer.innerHTML = '<div class="loading">Search results will appear here...</div>';
         } else {
             // Get public keys for each found private key
             const resultsWithPublicKeys = await Promise.all(
-                validEntries.map(async ([address, privateKey]) => {
+                completedResults.map(async ([address, privateKey]) => {
                     try {
                         // Only try to get public key if address is 12 characters
                         if (address.length === 12) {
@@ -478,47 +404,40 @@ async function refreshResults() {
                 </div>
             `).join('');
             
-            // Only log when results change
-            const currentCount = resultsContainer.dataset.resultCount || '0';
-            if (validEntries.length.toString() !== currentCount) {
-                resultsContainer.dataset.resultCount = validEntries.length.toString();
-                if (validEntries.length > 0) {
-                    logToConsole(`Found ${validEntries.length} results`, 'info');
+            // Log new completions
+            const currentResultCount = resultsContainer.dataset.resultCount || '0';
+            if (completedResults.length.toString() !== currentResultCount) {
+                resultsContainer.dataset.resultCount = completedResults.length.toString();
+                if (completedResults.length > 0) {
+                    logToConsole(`Found ${completedResults.length} completed search results`, 'success');
                 }
             }
         }
+        
+        // Debug logging - only log when status changes
+        const currentStatus = `${entries.length}-${pendingTasks.length}-${completedResults.length}`;
+        const lastStatus = resultsContainer.dataset.debugStatus || '';
+        if (currentStatus !== lastStatus && entries.length > 0) {
+            resultsContainer.dataset.debugStatus = currentStatus;
+            logToConsole(`Status: ${entries.length} total, ${pendingTasks.length} pending, ${completedResults.length} completed`, 'info');
+        }
+        
     } catch (error) {
-        logToConsole('Failed to load results: ' + error.message, 'error');
+        logToConsole('Failed to update tasks and results: ' + error.message, 'error');
         document.getElementById('resultsContainer').innerHTML = '<div class="loading">Error loading results</div>';
     }
 }
 
-async function exportResults() {
-    try {
-        const response = await fetch(`${API_BASE}/review-storage`);
-        const data = await response.json();
-        
-        const csvContent = 'Address,Private Key\n' + 
-            Object.entries(data)
-                .filter(([address, key]) => key && key !== '')
-                .map(([address, key]) => `${address},${key}`)
-                .join('\n');
-        
-        const blob = new Blob([csvContent], { type: 'text/csv' });
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `nroottag_results_${new Date().toISOString().split('T')[0]}.csv`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
-        
-        logToConsole('Results exported successfully', 'success');
-    } catch (error) {
-        logToConsole('Failed to export results: ' + error.message, 'error');
-    }
+// Legacy function for compatibility - now calls the unified function
+async function updateSearchResults() {
+    await updateTasksAndResults();
 }
+
+// Legacy function for compatibility - now calls the unified function  
+async function loadTasks() {
+    await updateTasksAndResults();
+}
+
 
 // Utility Functions
 function validateSaladConfig() {
@@ -577,12 +496,8 @@ function closeModal(modalId) {
 
 // Click outside modal to close
 window.onclick = function(event) {
-    const taskModal = document.getElementById('taskModal');
     const configModal = document.getElementById('configModal');
     
-    if (event.target === taskModal) {
-        taskModal.style.display = 'none';
-    }
     if (event.target === configModal) {
         configModal.style.display = 'none';
     }

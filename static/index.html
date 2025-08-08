@@ -69,14 +69,8 @@
                         <button class="btn btn-success" onclick="handleSearch()">
                             <i class="fas fa-search"></i> <span id="searchButtonText">Search</span>
                         </button>
-                        <button class="btn btn-primary" onclick="addTaskFromInput()">
-                            <i class="fas fa-plus"></i> Add Task
-                        </button>
                         <button class="btn btn-danger" onclick="clearAllTasks()">
                             <i class="fas fa-trash"></i> Clear All Tasks
-                        </button>
-                        <button class="btn btn-info" onclick="viewTasks()">
-                            <i class="fas fa-list"></i> View Tasks
                         </button>
                     </div>
                 </div>
@@ -94,17 +88,9 @@
             <section class="panel results-panel">
                 <h2><i class="fas fa-database"></i> Search Results</h2>
                 
-                <div class="results-controls">
-                    <button class="btn btn-primary" onclick="refreshResults()">
-                        <i class="fas fa-sync"></i> Refresh Results
-                    </button>
-                    <button class="btn btn-secondary" onclick="exportResults()">
-                        <i class="fas fa-download"></i> Export Results
-                    </button>
-                </div>
                 
                 <div id="resultsContainer" class="results-container">
-                    <div class="loading">Click refresh to load results...</div>
+                    <div class="loading">Search results will appear here...</div>
                 </div>
             </section>
         </div>
@@ -118,14 +104,6 @@
         </section>
     </div>
 
-    <!-- Modal for task viewing -->
-    <div id="taskModal" class="modal">
-        <div class="modal-content">
-            <span class="close" onclick="closeModal('taskModal')">&times;</span>
-            <h2>Active Search Tasks</h2>
-            <div id="modalTaskList" class="modal-task-list"></div>
-        </div>
-    </div>
 
     <!-- Configuration Modal -->
     <div id="configModal" class="modal">
