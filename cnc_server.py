@@ -32,8 +32,9 @@ import multiprocessing as mp
 import requests
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, Response
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse, Response, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import uvicorn
 from cryptography.hazmat.backends import default_backend
@@ -57,11 +58,27 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Mount static files directory
+app.mount("/static", StaticFiles(directory="static"), name="static")
+app.mount("/images", StaticFiles(directory="images"), name="images")
+
+# Add root redirect to dashboard
+@app.get("/", include_in_schema=False)
+async def root():
+    """Redirect root to dashboard."""
+    return RedirectResponse(url="/static/index.html")
+
+# Serve favicon
+@app.get("/nroottag.ico", include_in_schema=False)
+async def favicon():
+    """Serve favicon."""
+    return FileResponse("nroottag.ico")
+
 # Initialize thread-safe queue for batch processing inserts
 insert_queue = queue.Queue()
 
-# Create a manager for sharing file handles between processes
-manager = mp.Manager()
+# Global variables for multiprocessing
+manager = None
 file_handles = {}
 
 # Global configuration
@@ -130,6 +147,16 @@ class ApiKey(BaseModel):
     """
     vastai_api: str
     cnc_server_url: str
+
+
+class SaladCloudRequest(BaseModel):
+    """
+    Request model for Salad Cloud operations.
+    """
+    organization_name: str
+    project_name: str
+    container_group_name: str
+    salad_api_key: str
 
 
 class DeleteRequest(BaseModel):
@@ -276,6 +303,67 @@ def process_insert_queue():
             continue
         except Exception as e:
             logger.error(f"Error processing insert request: {e}")
+
+def process_pending_tasks():
+    """
+    Background worker that checks if pending tasks now have keys in data files.
+    Automatically updates storage.json when keys are discovered.
+    """
+    while True:
+        try:
+            # Get all pending tasks (empty entries in storage)
+            candidates = storage.get_empty()
+            if not candidates:
+                time.sleep(10)  # No pending tasks, wait longer
+                continue
+            
+            # Process a batch of pending tasks
+            batch_size = 10  # Process up to 10 tasks per cycle
+            tasks_to_check = list(candidates)[:batch_size]
+            found_count = 0
+            
+            for address in tasks_to_check:
+                try:
+                    # Only process 12-character addresses
+                    if len(address) != 12:
+                        continue
+                        
+                    # Normalize the address (mask high bits)
+                    normalized_address = normalize_address(address)
+                    normalized_prefix = normalized_address[:6]
+                    normalized_suffix = normalized_address[6:12]
+                    suffix_int = int(normalized_suffix, 16)
+                    
+                    # Check if data file exists
+                    if not if_dat_exists(normalized_prefix):
+                        continue  # Data file not available yet
+                    
+                    # Get file handle
+                    if normalized_prefix not in file_handles:
+                        file_handles[normalized_prefix] = get_dat_handle(normalized_prefix)
+                    file_handle = file_handles[normalized_prefix]
+                    
+                    # Check if key exists in data file
+                    priv_key = get_value_from_dat(file_handle, suffix_int)
+                    if priv_key != b'\0' * 28:
+                        # Key found! Update storage
+                        storage.set(address, priv_key.hex())
+                        found_count += 1
+                        logger.info(f"Background scanner found key for {address}")
+                        
+                except Exception as e:
+                    logger.debug(f"Error checking task {address}: {e}")
+                    continue
+            
+            if found_count > 0:
+                logger.info(f"Background scanner completed {found_count} tasks")
+            
+            # Wait before next scan cycle
+            time.sleep(5)  # Scan every 5 seconds
+            
+        except Exception as e:
+            logger.error(f"Error in pending task processor: {e}")
+            time.sleep(10)
 
 
 def insert_data(request: InsertRequest):
@@ -859,12 +947,7 @@ async def destroy_instances(vastai_token: str):
 
 
 @app.post("/saladcloud-start-containers", tags=["Integration"])
-async def start_containers(
-        organization_name: str,
-        project_name: str,
-        container_group_name: str,
-        salad_api_key: str,
-):
+async def start_containers(request: SaladCloudRequest):
     """
     Start containers on Saladcloud using their public API.
     
@@ -880,12 +963,12 @@ async def start_containers(
 
     try:
         headers = {
-            'Salad-Api-Key': salad_api_key,
+            'Salad-Api-Key': request.salad_api_key,
             'Content-Type': 'application/json'
         }
 
         base_url = "https://api.salad.com/api/public"
-        start_url = f"{base_url}/organizations/{organization_name}/projects/{project_name}/containers/{container_group_name}/start"
+        start_url = f"{base_url}/organizations/{request.organization_name}/projects/{request.project_name}/containers/{request.container_group_name}/start"
 
         response = requests.post(
             start_url,
@@ -897,11 +980,24 @@ async def start_containers(
                 "message": f"Successfully started containers",
             }
         else:
-            logger.error(f"Failed to start containers: {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Failed to start containers: {response.text}"
-            )
+            error_detail = response.text
+            logger.error(f"Failed to start containers: {error_detail}")
+            
+            # Try to parse JSON error for better user feedback
+            try:
+                error_json = response.json()
+                user_message = error_json.get('detail', error_json.get('title', 'Unknown error'))
+                return {
+                    "success": False,
+                    "message": f"Failed to start containers: {user_message}",
+                    "error_details": error_json
+                }
+            except:
+                return {
+                    "success": False,
+                    "message": f"Failed to start containers: HTTP {response.status_code}",
+                    "error_details": error_detail
+                }
 
     except Exception as e:
         logger.error(f"Error starting containers: {str(e)}")
@@ -909,12 +1005,7 @@ async def start_containers(
 
 
 @app.post("/saladcloud-stop-containers", tags=["Integration"])
-async def stop_containers(
-        organization_name: str,
-        project_name: str,
-        container_group_name: str,
-        salad_api_key: str
-):
+async def stop_containers(request: SaladCloudRequest):
     """
     Stop all containers in a container group on Saladcloud.
     
@@ -929,12 +1020,12 @@ async def stop_containers(
     """
     try:
         headers = {
-            'Salad-Api-Key': salad_api_key,
+            'Salad-Api-Key': request.salad_api_key,
             'Content-Type': 'application/json'
         }
 
         base_url = "https://api.salad.com/api/public"
-        stop_url = f"{base_url}/organizations/{organization_name}/projects/{project_name}/containers/{container_group_name}/stop"
+        stop_url = f"{base_url}/organizations/{request.organization_name}/projects/{request.project_name}/containers/{request.container_group_name}/stop"
 
         response = requests.post(
             stop_url,
@@ -946,15 +1037,101 @@ async def stop_containers(
                 "message": f"Successfully stopped containers",
             }
         else:
-            logger.error(f"Failed to stop containers: {response.text}")
-            raise HTTPException(
-                status_code=response.status_code,
-                detail=f"Failed to stop containers: {response.text}"
-            )
+            error_detail = response.text
+            logger.error(f"Failed to stop containers: {error_detail}")
+            
+            # Try to parse JSON error for better user feedback
+            try:
+                error_json = response.json()
+                user_message = error_json.get('detail', error_json.get('title', 'Unknown error'))
+                return {
+                    "success": False,
+                    "message": f"Failed to stop containers: {user_message}",
+                    "error_details": error_json
+                }
+            except:
+                return {
+                    "success": False,
+                    "message": f"Failed to stop containers: HTTP {response.status_code}",
+                    "error_details": error_detail
+                }
 
     except Exception as e:
         logger.error(f"Error stopping containers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error stopping containers")
+
+
+@app.get("/saladcloud-container-status", tags=["Integration"])
+async def get_container_group_status(
+    organization_name: str = Query(..., description="Salad organization name"),
+    project_name: str = Query(..., description="Salad project name"),
+    container_group_name: str = Query(..., description="Container group name"),
+    salad_api_key: str = Query(..., description="Salad API key")
+):
+    """
+    Get the status of a container group and its instances.
+    
+    Returns container group details including instance states.
+    """
+    try:
+        # Get container group details
+        url = f"https://api.salad.com/api/public/organizations/{organization_name}/projects/{project_name}/containers/{container_group_name}"
+        headers = {
+            "accept": "application/json",
+            "Salad-Api-Key": salad_api_key
+        }
+        
+        group_response = requests.get(url, headers=headers)
+        
+        if group_response.status_code != 200:
+            return {
+                "success": False,
+                "message": f"Failed to get container group: HTTP {group_response.status_code}",
+                "error": group_response.text
+            }
+        
+        group_data = group_response.json()
+        
+        # Get container instances
+        instances_url = f"{url}/instances"
+        instances_response = requests.get(instances_url, headers=headers)
+        
+        if instances_response.status_code != 200:
+            return {
+                "success": False,
+                "message": f"Failed to get container instances: HTTP {instances_response.status_code}",
+                "error": instances_response.text
+            }
+        
+        instances_data = instances_response.json()
+        
+        # Count instance states
+        state_counts = {}
+        for instance in instances_data.get("instances", []):
+            state = instance.get("state", "unknown")
+            state_counts[state] = state_counts.get(state, 0) + 1
+        
+        return {
+            "success": True,
+            "container_group": {
+                "name": group_data.get("name"),
+                "status": group_data.get("status"),
+                "replicas": group_data.get("replicas"),
+                "current_state": group_data.get("current_state"),
+                "instance_states": state_counts,
+                "total_instances": len(instances_data.get("instances", [])),
+                "ready_instances": state_counts.get("running", 0),
+                "deploying_instances": state_counts.get("allocating", 0) + state_counts.get("creating", 0),
+                "failed_instances": state_counts.get("failed", 0)
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting container status: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Error getting container status: {str(e)}"
+        }
 
 
 # Coverage Calculation Functions
@@ -1077,7 +1254,7 @@ async def get_coverage(prefix: str):
 
 
 @app.post("/delete-search-task", tags=["Search Task"])
-async def delete_storage(key: str):
+async def delete_storage(request: DeleteRequest):
     """
     Delete specific storage record or clear all records.
     
@@ -1094,7 +1271,7 @@ async def delete_storage(key: str):
         dict: Status message indicating what was deleted
     """
     try:
-        if key == "*":
+        if request.key == "*":
             # Clear all records
             storage.data.clear()
             storage.save()
@@ -1102,13 +1279,13 @@ async def delete_storage(key: str):
             return {"message": "All storage records cleared successfully"}
 
         # Delete specific key
-        if key in storage.data:
-            del storage.data[key]
+        if request.key in storage.data:
+            del storage.data[request.key]
             storage.save()
-            logger.debug(f"Deleted storage record for key: {key}")
-            return {"message": f"Storage record for key '{key}' deleted successfully"}
+            logger.debug(f"Deleted storage record for key: {request.key}")
+            return {"message": f"Storage record for key '{request.key}' deleted successfully"}
         else:
-            logger.debug(f"Key not found in storage: {key}")
+            logger.debug(f"Key not found in storage: {request.key}")
             return {"message": "Key not found in storage"}
 
     except Exception as e:
@@ -1174,9 +1351,16 @@ async def add_search_task(prefix: PrefixRequest):
 
 # Main Entry Point
 if __name__ == "__main__":
-    # Start background processing thread
+    # Initialize multiprocessing manager
+    manager = mp.Manager()
+    
+    # Start background processing threads
     insert_thread = threading.Thread(target=process_insert_queue, daemon=True)
     insert_thread.start()
+    
+    # Start background task scanner thread
+    task_scanner_thread = threading.Thread(target=process_pending_tasks, daemon=True)
+    task_scanner_thread.start()
 
     # Initialize storage
     storage = Storage()

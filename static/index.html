@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>nRootTag Control Center</title>
+    <link rel="icon" href="/nroottag.ico" type="image/x-icon">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="logo">
+                <img src="/images/nRootTag.webp" alt="nRootTag" class="logo-image">
+                <h1>nRootTag Control Center</h1>
+            </div>
+            <div class="status-indicator">
+                <span class="status-dot" id="statusDot"></span>
+                <span id="statusText">Initializing...</span>
+            </div>
+        </header>
+
+        <div class="main-grid">
+            <!-- Cloud Control -->
+            <section class="panel control-panel">
+                <h2><i class="fas fa-cloud"></i> Salad Cloud Control</h2>
+                
+                <div class="config-status">
+                    <div id="configStatus" class="config-status-display">
+                        <span><i class="fas fa-exclamation-triangle"></i> Configuration Required</span>
+                    </div>
+                    <button class="btn btn-primary" onclick="openConfigModal()">
+                        <i class="fas fa-cog"></i> Config
+                    </button>
+                </div>
+                
+                <div class="cloud-controls">
+                    <button class="btn btn-success btn-large" onclick="startContainers()">
+                        <i class="fas fa-play"></i> Start Containers
+                    </button>
+                    <button class="btn btn-danger btn-large" onclick="stopContainers()">
+                        <i class="fas fa-stop"></i> Stop Containers
+                    </button>
+                </div>
+                
+                <div class="container-status-section">
+                    <h3>Container Group Status</h3>
+                    <div id="containerStatus" class="container-status-display">
+                        <div class="status-loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading...
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Search Management -->
+            <section class="panel search-panel">
+                <h2><i class="fas fa-search"></i> Search Management</h2>
+                
+                <div class="search-controls">
+                    <div class="form-group">
+                        <label>Search Target (6-char prefix or 12-char address)</label>
+                        <input type="text" id="searchInput" placeholder="aaaaaa or 1eadbe112233" maxlength="12" pattern="[0-9a-fA-F]{6,12}">
+                    </div>
+                    
+                    <div class="button-grid">
+                        <button class="btn btn-success" onclick="handleSearch()">
+                            <i class="fas fa-search"></i> <span id="searchButtonText">Search</span>
+                        </button>
+                        <button class="btn btn-danger" onclick="clearAllTasks()">
+                            <i class="fas fa-trash"></i> Clear All Tasks
+                        </button>
+                    </div>
+                </div>
+
+                <div class="search-status">
+                    <h3>Current Tasks</h3>
+                    <div id="taskList" class="task-list">
+                        <div class="loading">Loading tasks...</div>
+                    </div>
+                </div>
+            </section>
+
+
+            <!-- Results Panel -->
+            <section class="panel results-panel">
+                <h2><i class="fas fa-database"></i> Search Results</h2>
+                
+                
+                <div id="resultsContainer" class="results-container">
+                    <div class="loading">Search results will appear here...</div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Console Log -->
+        <section class="console-panel">
+            <h3><i class="fas fa-terminal"></i> Activity Log</h3>
+            <div id="console" class="console">
+                <div class="console-entry">System initialized</div>
+            </div>
+        </section>
+    </div>
+
+
+    <!-- Configuration Modal -->
+    <div id="configModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal('configModal')">&times;</span>
+            <h2><i class="fas fa-cog"></i> Salad Cloud Configuration</h2>
+            
+            <div class="config-form">
+                <div class="form-group">
+                    <label>API Token</label>
+                    <input type="password" id="modalSaladToken" placeholder="Enter your Salad API token">
+                </div>
+                
+                <div class="form-group">
+                    <label>Organization Name</label>
+                    <input type="text" id="modalOrgName" placeholder="your-organization">
+                </div>
+                
+                <div class="form-group">
+                    <label>Project Name</label>
+                    <input type="text" id="modalProjectName" placeholder="your-project">
+                </div>
+                
+                <div class="form-group">
+                    <label>Container Group</label>
+                    <input type="text" id="modalContainerGroup" placeholder="your-container-group">
+                </div>
+                
+                <div class="modal-actions">
+                    <button class="btn btn-primary" onclick="saveConfiguration()">
+                        <i class="fas fa-save"></i> Save Configuration
+                    </button>
+                    <button class="btn btn-danger" onclick="clearConfiguration()">
+                        <i class="fas fa-trash"></i> Clear All
+                    </button>
+                    <button class="btn btn-secondary" onclick="closeModal('configModal')">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>

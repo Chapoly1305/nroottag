@@ -1,0 +1,646 @@
+// Global state
+let serverStatus = false;
+let saladToken = localStorage.getItem('saladToken') || '';
+let saladConfig = JSON.parse(localStorage.getItem('saladConfig') || '{}');
+
+// API base URL
+const API_BASE = window.location.origin;
+
+// Initialize on page load
+document.addEventListener('DOMContentLoaded', function() {
+    initializeApp();
+});
+
+// Initialize application
+async function initializeApp() {
+    logToConsole('Initializing nRootTag Control Center...', 'info');
+    
+    // Load saved configuration
+    loadConfiguration();
+    
+    // Check server status
+    await checkServerStatus();
+    
+    // Load current tasks
+    await loadTasks();
+    
+    // Initial container status fetch
+    await fetchContainerStatus();
+    
+    // Initial search results check
+    await updateSearchResults();
+    
+    // Set up periodic updates
+    setInterval(checkServerStatus, 5000);
+    setInterval(updateTasksAndResults, 3000); // Unified check for tasks and results every 3 seconds
+    setInterval(fetchContainerStatus, 10000); // Refresh container status every 10 seconds
+    
+    logToConsole('System ready', 'success');
+}
+
+// Configuration Management
+function loadConfiguration() {
+    updateConfigurationStatus();
+}
+
+function updateConfigurationStatus() {
+    const configStatus = document.getElementById('configStatus');
+    const isConfigured = saladToken && saladConfig.orgName && saladConfig.projectName && saladConfig.containerGroup;
+    
+    if (isConfigured) {
+        configStatus.classList.add('configured');
+        configStatus.innerHTML = '<span><i class="fas fa-check-circle"></i> Configuration Complete</span>';
+    } else {
+        configStatus.classList.remove('configured');
+        configStatus.innerHTML = '<span><i class="fas fa-exclamation-triangle"></i> Configuration Required</span>';
+    }
+}
+
+function openConfigModal() {
+    // Load current values into modal
+    document.getElementById('modalSaladToken').value = saladToken || '';
+    document.getElementById('modalOrgName').value = saladConfig.orgName || '';
+    document.getElementById('modalProjectName').value = saladConfig.projectName || '';
+    document.getElementById('modalContainerGroup').value = saladConfig.containerGroup || '';
+    
+    document.getElementById('configModal').style.display = 'block';
+}
+
+function saveConfiguration() {
+    const token = document.getElementById('modalSaladToken').value.trim();
+    const orgName = document.getElementById('modalOrgName').value.trim();
+    const projectName = document.getElementById('modalProjectName').value.trim();
+    const containerGroup = document.getElementById('modalContainerGroup').value.trim();
+    
+    if (!token || !orgName || !projectName || !containerGroup) {
+        showNotification('Please fill in all configuration fields', 'error');
+        return;
+    }
+    
+    // Save to localStorage
+    saladToken = token;
+    saladConfig = { orgName, projectName, containerGroup };
+    
+    localStorage.setItem('saladToken', saladToken);
+    localStorage.setItem('saladConfig', JSON.stringify(saladConfig));
+    
+    // Update status display
+    updateConfigurationStatus();
+    
+    // Close modal
+    closeModal('configModal');
+    
+    logToConsole('Configuration saved successfully', 'success');
+    showNotification('Configuration saved successfully', 'success');
+}
+
+function clearConfiguration() {
+    if (!confirm('Are you sure you want to clear all configuration data?')) {
+        return;
+    }
+    
+    // Clear localStorage
+    localStorage.removeItem('saladToken');
+    localStorage.removeItem('saladConfig');
+    
+    // Reset global variables
+    saladToken = '';
+    saladConfig = {};
+    
+    // Clear modal fields
+    document.getElementById('modalSaladToken').value = '';
+    document.getElementById('modalOrgName').value = '';
+    document.getElementById('modalProjectName').value = '';
+    document.getElementById('modalContainerGroup').value = '';
+    
+    // Update status display
+    updateConfigurationStatus();
+    
+    logToConsole('Configuration cleared', 'info');
+    showNotification('Configuration cleared', 'info');
+}
+
+// Server Status Management
+async function checkServerStatus() {
+    try {
+        const response = await fetch(`${API_BASE}/status`);
+        const data = await response.json();
+        
+        serverStatus = data.continue;
+        updateStatusIndicator(serverStatus);
+        
+    } catch (error) {
+        updateStatusIndicator(false, true);
+        logToConsole('Failed to check server status: ' + error.message, 'error');
+    }
+}
+
+
+// Unified Search Management
+async function handleSearch() {
+    const searchInput = document.getElementById('searchInput');
+    const input = searchInput.value.trim();
+    
+    if (!input) {
+        showNotification('Please enter a hex string', 'error');
+        return;
+    }
+    
+    if (!/^[0-9a-fA-F]+$/.test(input)) {
+        showNotification('Please enter a valid hex string (0-9, a-f, A-F only)', 'error');
+        return;
+    }
+    
+    if (input.length < 6 || input.length > 12) {
+        showNotification('Please enter 6-12 characters', 'error');
+        return;
+    }
+    
+    if (input.length === 6) {
+        // 6 characters - search for any address starting with this prefix
+        // We'll search for prefix + "000000" as an example
+        logToConsole(`Searching prefix ${input} range (using ${input}000000 as sample)`, 'info');
+        await searchAddress(input + '000000');
+    } else if (input.length === 12) {
+        // 12 characters - search specific address
+        await searchAddress(input);
+    } else {
+        showNotification('Please enter exactly 6 characters (prefix) or 12 characters (address)', 'error');
+        return;
+    }
+    
+    searchInput.value = '';
+}
+
+
+async function addSearchTask(prefix) {
+    try {
+        const response = await fetch(`${API_BASE}/add-search-task`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({prefix: prefix})
+        });
+        
+        if (response.ok) {
+            await loadTasks();
+            logToConsole(`Added search task: ${prefix}`, 'success');
+            showNotification('Search task added successfully', 'success');
+        }
+    } catch (error) {
+        logToConsole('Failed to add search task: ' + error.message, 'error');
+    }
+}
+
+async function searchAddress(address) {
+    try {
+        logToConsole(`Searching for address: ${address}`, 'info');
+        
+        // Use /public-key endpoint which saves found keys to storage
+        const response = await fetch(`${API_BASE}/public-key`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({address: address})
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            logToConsole(`Found public key for ${address}: ${data.public_key}`, 'success');
+            showNotification('Address found! Check console.', 'success');
+        } else if (response.status === 404) {
+            const error = await response.json();
+            logToConsole(`Address ${address} not found, added to search tasks: ${error.detail}`, 'info');
+            showNotification('Address not found - added to search tasks for processing', 'info');
+            await updateTasksAndResults(); // Refresh tasks and results
+        } else {
+            const error = await response.json();
+            logToConsole(`Search failed for ${address}: ${error.detail}`, 'error');
+            showNotification('Search failed: ' + error.detail, 'error');
+        }
+    } catch (error) {
+        logToConsole('Failed to search address: ' + error.message, 'error');
+        showNotification('Search request failed', 'error');
+    }
+}
+
+
+async function clearAllTasks() {
+    if (!confirm('Are you sure you want to clear all search tasks?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/delete-search-task`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({key: '*'})
+        });
+        
+        if (response.ok) {
+            await updateTasksAndResults();
+            logToConsole('All search tasks cleared', 'success');
+            showNotification('All tasks cleared successfully', 'success');
+        } else {
+            const error = await response.json();
+            logToConsole('Failed to clear tasks: ' + error.detail, 'error');
+        }
+    } catch (error) {
+        logToConsole('Failed to clear tasks: ' + error.message, 'error');
+    }
+}
+
+
+// Salad Cloud Control
+async function startContainers() {
+    if (!validateSaladConfig()) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/saladcloud-start-containers`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                organization_name: saladConfig.orgName,
+                project_name: saladConfig.projectName,
+                container_group_name: saladConfig.containerGroup,
+                salad_api_key: saladToken
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            logToConsole('Containers started successfully', 'success');
+            showNotification('Containers started', 'success');
+        } else {
+            // Handle detailed error response
+            if (data.success === false) {
+                logToConsole(data.message, 'error');
+                showNotification(data.message, 'error');
+            } else {
+                logToConsole('Failed to start containers: ' + JSON.stringify(data), 'error');
+                showNotification('Failed to start containers', 'error');
+            }
+        }
+    } catch (error) {
+        logToConsole('Failed to start containers: ' + error.message, 'error');
+    }
+}
+
+async function stopContainers() {
+    if (!validateSaladConfig()) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`${API_BASE}/saladcloud-stop-containers`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({
+                organization_name: saladConfig.orgName,
+                project_name: saladConfig.projectName,
+                container_group_name: saladConfig.containerGroup,
+                salad_api_key: saladToken
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            logToConsole('Containers stopped successfully', 'success');
+            showNotification('Containers stopped', 'success');
+        } else {
+            // Handle detailed error response
+            if (data.success === false) {
+                logToConsole(data.message, 'error');
+                showNotification(data.message, 'error');
+            } else {
+                logToConsole('Failed to stop containers: ' + JSON.stringify(data), 'error');
+                showNotification('Failed to stop containers', 'error');
+            }
+        }
+    } catch (error) {
+        logToConsole('Failed to stop containers: ' + error.message, 'error');
+    }
+}
+
+
+
+// Unified Tasks and Results Management
+async function updateTasksAndResults() {
+    try {
+        // Get updated storage data (server-side background scanner handles key discovery)
+        const response = await fetch(`${API_BASE}/review-storage`);
+        const data = await response.json();
+        
+        const entries = Object.entries(data);
+        const pendingTasks = entries.filter(([address, key]) => !key || key === '').map(([address, key]) => address);
+        const completedResults = entries.filter(([address, key]) => key && key !== '').reverse();
+        
+        // Update Current Tasks section
+        const taskList = document.getElementById('taskList');
+        if (pendingTasks.length === 0) {
+            taskList.innerHTML = '<div class="loading">No active tasks</div>';
+        } else {
+            taskList.innerHTML = pendingTasks.slice(0, 10).map(task => 
+                `<div class="task-item">${task}</div>`
+            ).join('');
+            
+            if (pendingTasks.length > 10) {
+                taskList.innerHTML += `<div class="task-item">... and ${pendingTasks.length - 10} more</div>`;
+            }
+        }
+        
+        // Update Search Results section
+        const resultsContainer = document.getElementById('resultsContainer');
+        if (completedResults.length === 0) {
+            resultsContainer.innerHTML = '<div class="loading">Search results will appear here...</div>';
+        } else {
+            // Get public keys for each found private key
+            const resultsWithPublicKeys = await Promise.all(
+                completedResults.map(async ([address, privateKey]) => {
+                    try {
+                        // Only try to get public key if address is 12 characters
+                        if (address.length === 12) {
+                            const pubResponse = await fetch(`${API_BASE}/public-key`, {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({address: address})
+                            });
+                            
+                            if (pubResponse.ok) {
+                                const pubData = await pubResponse.json();
+                                if (pubData.public_key) {
+                                    return {
+                                        address,
+                                        privateKey,
+                                        publicKey: pubData.public_key
+                                    };
+                                }
+                            }
+                        }
+                        // For non-12 char addresses or if public key fetch fails, just show the private key
+                        return { address, privateKey, publicKey: 'N/A' };
+                    } catch (error) {
+                        return { address, privateKey, publicKey: 'Error' };
+                    }
+                })
+            );
+            
+            resultsContainer.innerHTML = resultsWithPublicKeys.map(({address, privateKey, publicKey}) => `
+                <div class="result-item">
+                    <div class="result-row">
+                        <span class="result-label">Addr:</span>
+                        <span class="result-value result-address">${address}</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="result-label">PrivKey:</span>
+                        <span class="result-value result-private-key">${privateKey}</span>
+                    </div>
+                    <div class="result-row">
+                        <span class="result-label">PubKey:</span>
+                        <span class="result-value result-public-key">${publicKey}</span>
+                    </div>
+                </div>
+            `).join('');
+            
+            // Log new completions
+            const currentResultCount = resultsContainer.dataset.resultCount || '0';
+            if (completedResults.length.toString() !== currentResultCount) {
+                resultsContainer.dataset.resultCount = completedResults.length.toString();
+                if (completedResults.length > 0) {
+                    logToConsole(`Found ${completedResults.length} completed search results`, 'success');
+                }
+            }
+        }
+        
+        // Debug logging - only log when status changes
+        const currentStatus = `${entries.length}-${pendingTasks.length}-${completedResults.length}`;
+        const lastStatus = resultsContainer.dataset.debugStatus || '';
+        if (currentStatus !== lastStatus && entries.length > 0) {
+            resultsContainer.dataset.debugStatus = currentStatus;
+            logToConsole(`Status: ${entries.length} total, ${pendingTasks.length} pending, ${completedResults.length} completed`, 'info');
+        }
+        
+    } catch (error) {
+        logToConsole('Failed to update tasks and results: ' + error.message, 'error');
+        document.getElementById('resultsContainer').innerHTML = '<div class="loading">Error loading results</div>';
+    }
+}
+
+// Legacy function for compatibility - now calls the unified function
+async function updateSearchResults() {
+    await updateTasksAndResults();
+}
+
+// Legacy function for compatibility - now calls the unified function  
+async function loadTasks() {
+    await updateTasksAndResults();
+}
+
+
+// Utility Functions
+function validateSaladConfig() {
+    if (!saladToken) {
+        showNotification('Please configure your Salad Cloud token first', 'error');
+        return false;
+    }
+    
+    if (!saladConfig.orgName || !saladConfig.projectName || !saladConfig.containerGroup) {
+        showNotification('Please complete all Salad Cloud configuration fields', 'error');
+        return false;
+    }
+    
+    return true;
+}
+
+function updateStatusIndicator(isActive, isError = false) {
+    const dot = document.getElementById('statusDot');
+    const text = document.getElementById('statusText');
+    
+    dot.classList.remove('active', 'error');
+    
+    if (isError) {
+        dot.classList.add('error');
+        text.textContent = 'Connection Error';
+    } else if (isActive) {
+        dot.classList.add('active');
+        text.textContent = 'Connected';
+    } else {
+        text.textContent = 'Server Stopped';
+    }
+}
+
+function logToConsole(message, type = 'info') {
+    const console = document.getElementById('console');
+    const entry = document.createElement('div');
+    entry.className = `console-entry ${type}`;
+    entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+    console.appendChild(entry);
+    console.scrollTop = console.scrollHeight;
+    
+    // Keep only last 50 entries
+    while (console.children.length > 50) {
+        console.removeChild(console.firstChild);
+    }
+}
+
+function showNotification(message, type = 'info') {
+    // Simple notification - you could enhance this with a toast library
+    logToConsole(message, type);
+}
+
+function closeModal(modalId) {
+    document.getElementById(modalId).style.display = 'none';
+}
+
+// Click outside modal to close
+window.onclick = function(event) {
+    const configModal = document.getElementById('configModal');
+    
+    if (event.target === configModal) {
+        configModal.style.display = 'none';
+    }
+}
+
+
+// Enter key support for search input
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('searchInput');
+    
+    if (searchInput) {
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                handleSearch();
+            }
+        });
+        
+        // Update button text based on input length
+        searchInput.addEventListener('input', function(e) {
+            const input = e.target.value.trim();
+            const buttonText = document.getElementById('searchButtonText');
+            
+            if (input.length === 6 && /^[0-9a-fA-F]{6}$/.test(input)) {
+                buttonText.textContent = 'Search Prefix';
+            } else if (input.length === 12 && /^[0-9a-fA-F]{12}$/.test(input)) {
+                buttonText.textContent = 'Search Address';
+            } else {
+                buttonText.textContent = 'Search';
+            }
+        });
+    }
+});
+
+// Container Status Functions
+async function fetchContainerStatus() {
+    if (!validateSaladConfig()) {
+        const statusDiv = document.getElementById('containerStatus');
+        statusDiv.innerHTML = '<div class="config-status-display"><i class="fas fa-exclamation-triangle"></i> Configuration Required</div>';
+        return;
+    }
+    
+    try {
+        const params = new URLSearchParams({
+            organization_name: saladConfig.orgName,
+            project_name: saladConfig.projectName,
+            container_group_name: saladConfig.containerGroup,
+            salad_api_key: saladToken
+        });
+        
+        const response = await fetch(`${API_BASE}/saladcloud-container-status?${params}`);
+        const data = await response.json();
+        
+        const statusDiv = document.getElementById('containerStatus');
+        
+        if (data.success) {
+            const group = data.container_group;
+            
+            // Calculate runtime
+            let runtimeText = 'N/A';
+            if (group.current_state?.start_time) {
+                const startTime = new Date(group.current_state.start_time);
+                const endTime = group.current_state.finish_time ? 
+                    new Date(group.current_state.finish_time) : 
+                    new Date();
+                
+                const diffMs = Math.abs(endTime - startTime); // Use absolute value to handle timezone issues
+                const diffMinutes = Math.floor(diffMs / (1000 * 60));
+                const diffHours = Math.floor(diffMinutes / 60);
+                const remainingMinutes = diffMinutes % 60;
+                
+                if (diffMinutes < 1) {
+                    runtimeText = '<1m';
+                } else if (diffHours > 0) {
+                    runtimeText = `${diffHours}h ${remainingMinutes}m`;
+                } else {
+                    runtimeText = `${remainingMinutes}m`;
+                }
+            }
+            
+            statusDiv.innerHTML = `
+                <div class="container-stats">
+                    <div class="stat-item">
+                        <div class="stat-label">Allocated</div>
+                        <div class="stat-value">${group.total_instances}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Ready</div>
+                        <div class="stat-value ready">${group.ready_instances}</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Deploying</div>
+                        <div class="stat-value deploying">${group.deploying_instances}</div>
+                    </div>
+                </div>
+                <div class="container-details">
+                    <div class="detail-row">
+                        <span class="detail-label">Configured Replicas:</span>
+                        <span class="detail-value">${group.replicas || 'N/A'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Current State:</span>
+                        <span class="detail-value">${group.current_state?.status || 'N/A'}</span>
+                    </div>
+                    <div class="detail-row">
+                        <span class="detail-label">Runtime:</span>
+                        <span class="detail-value">${runtimeText}</span>
+                    </div>
+                </div>
+            `;
+            
+            // Update button states based on container status
+            updateContainerButtons(group.current_state?.status);
+        } else {
+            statusDiv.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> ${data.message}</div>`;
+            updateContainerButtons(null);
+        }
+    } catch (error) {
+        const statusDiv = document.getElementById('containerStatus');
+        statusDiv.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> Failed to fetch container status</div>`;
+        logToConsole('Failed to fetch container status: ' + error.message, 'error');
+        updateContainerButtons(null);
+    }
+}
+
+function updateContainerButtons(containerStatus) {
+    const startBtn = document.querySelector('button[onclick="startContainers()"]');
+    const stopBtn = document.querySelector('button[onclick="stopContainers()"]');
+    
+    if (!startBtn || !stopBtn) return;
+    
+    // Reset button states
+    startBtn.disabled = false;
+    stopBtn.disabled = false;
+    startBtn.style.opacity = '1';
+    stopBtn.style.opacity = '1';
+    
+    if (containerStatus === 'stopped') {
+        // Containers are stopped - disable stop button
+        stopBtn.disabled = true;
+        stopBtn.style.opacity = '0.5';
+    } else if (containerStatus === 'running' || containerStatus === 'deploying') {
+        // Containers are running/deploying - disable start button
+        startBtn.disabled = true;
+        startBtn.style.opacity = '0.5';
+    }
+}
