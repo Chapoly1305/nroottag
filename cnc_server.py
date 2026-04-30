@@ -25,7 +25,7 @@ import threading
 import time
 from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
-from typing import List, BinaryIO
+from typing import List, BinaryIO, Tuple
 import queue
 import json
 import multiprocessing as mp
@@ -94,10 +94,10 @@ VAST_API_BASE_URL = "https://console.vast.ai/api/v0"
 
 class PrefixRequest(BaseModel):
     """
-    Request model for operations that only require a prefix.
+    Request model for operations that accept a prefix-like task value.
     Example:
         {
-            "prefix": "aaaaaa"  # 6-character hex string
+            "prefix": "aaaaaa"  # 6-hex prefix or 12-hex exact search task
         }
     """
     prefix: str
@@ -210,7 +210,7 @@ class Storage:
         self.save()
 
     def get_empty(self):
-        # Get a list of prefixes that have value ""
+        # Get a list of pending search tasks.
         empty_prefixes = []
         for prefix in self.data:
             if self.data[prefix] == "":
@@ -329,7 +329,7 @@ def process_pending_tasks():
                         continue
                         
                     # Normalize the address (mask high bits)
-                    normalized_address = normalize_address(address)
+                    normalized_address = canonical_exact_address(address)
                     normalized_prefix = normalized_address[:6]
                     normalized_suffix = normalized_address[6:12]
                     suffix_int = int(normalized_suffix, 16)
@@ -347,9 +347,9 @@ def process_pending_tasks():
                     priv_key = get_value_from_dat(file_handle, suffix_int)
                     if priv_key != b'\0' * 28:
                         # Key found! Update storage
-                        storage.set(address, priv_key.hex())
+                        set_storage_task(normalized_address, priv_key.hex())
                         found_count += 1
-                        logger.info(f"Background scanner found key for {address}")
+                        logger.info(f"Background scanner found key for {normalized_address}")
                         
                 except Exception as e:
                     logger.debug(f"Error checking task {address}: {e}")
@@ -499,24 +499,133 @@ async def insert_data_route(request: InsertRequest):
         raise HTTPException(status_code=500, detail=f"Error inserting data: {str(e)}")
 
 
-def normalize_address(address: str):
-    """
-    Normalize an address by masking the high bits to 0b00.
+def canonicalize_hex_address(value: str) -> str:
+    """Normalize a byte-aligned hex prefix/address by clearing the first-byte high two bits."""
+    clean = value.strip().lower()
+    if len(clean) == 0 or len(clean) % 2 != 0:
+        raise ValueError("hex value must contain full bytes")
 
-    Args:
-        address: Hex string address
+    address_bytes = bytearray.fromhex(clean)
+    address_bytes[0] &= 0x3F
+    return address_bytes.hex()
 
-    Returns:
-        str: Normalized address with high bits set to 0b00
-    """
-    try:
-        address_bytes = bytearray.fromhex(address)
-        # Mask high bits to 00
-        address_bytes[0] &= 0x3F
-        return address_bytes.hex()
-    except Exception as e:
-        logger.error(f"Error normalizing address {address}: {e}")
-        return address  # Return original if error
+
+def canonical_task_key(value: str) -> str:
+    """Canonicalize a storage task key. Tasks are normalized 6-hex prefixes or 12-hex exact addresses."""
+    clean = value.strip().lower()
+    if len(clean) not in (6, 12):
+        raise ValueError("task key must be a 6-hex prefix or 12-hex exact address")
+    return canonicalize_hex_address(clean)
+
+
+def canonical_prefix(prefix: str) -> str:
+    clean = prefix.strip().lower()
+    if len(clean) != 6:
+        raise ValueError("prefix must be 6 hex characters")
+    return canonicalize_hex_address(clean)
+
+
+def canonical_suffix(suffix: str) -> str:
+    clean = suffix.strip().lower()
+    if len(clean) != 6:
+        raise ValueError("suffix must be 6 hex characters")
+    bytearray.fromhex(clean)
+    return clean
+
+
+def canonical_exact_address(address: str) -> str:
+    clean = address.strip().lower()[:12]
+    if len(clean) != 12:
+        raise ValueError("address must contain at least 12 hex characters")
+    return canonicalize_hex_address(clean)
+
+
+def choose_storage_value(existing: str, incoming: str, key: str) -> str:
+    """Merge storage aliases. Preserve found keys over pending markers."""
+    if existing:
+        if incoming and incoming != existing:
+            logger.warning(f"Conflicting stored values for canonical task {key}; keeping existing value")
+        return existing
+    return incoming
+
+
+def migrate_storage_to_canonical(storage_obj: Storage):
+    """Merge old first-byte aliases into canonical storage keys."""
+    migrated = {}
+    changed = False
+
+    for key, value in storage_obj.data.items():
+        try:
+            canonical = canonical_task_key(key)
+        except ValueError:
+            logger.warning(f"Leaving non-task storage key unchanged: {key}")
+            canonical = key
+
+        if canonical != key:
+            changed = True
+
+        if canonical in migrated:
+            migrated[canonical] = choose_storage_value(migrated[canonical], value, canonical)
+            changed = True
+        else:
+            migrated[canonical] = value
+
+    if changed:
+        storage_obj.save(migrated)
+        logger.info("Migrated storage.json to canonical search-task keys")
+
+
+def set_storage_task(raw_key: str, value: str) -> str:
+    """Set a canonical storage task and remove equivalent old aliases."""
+    canonical = canonical_task_key(raw_key)
+    merged_value = choose_storage_value(storage.data.get(canonical, ""), value, canonical)
+
+    aliases = []
+    for key in storage.data:
+        if key == canonical or len(key) not in (6, 12):
+            continue
+        try:
+            if canonical_task_key(key) == canonical:
+                aliases.append(key)
+        except ValueError:
+            continue
+
+    for alias in aliases:
+        merged_value = choose_storage_value(merged_value, storage.data[alias], canonical)
+        del storage.data[alias]
+
+    storage.data[canonical] = merged_value
+    storage.save()
+    return canonical
+
+
+def delete_storage_task(raw_key: str) -> Tuple[str, bool]:
+    """Delete a storage task by canonical key, including old equivalent aliases."""
+    canonical = canonical_task_key(raw_key)
+    keys_to_delete = []
+
+    for key in storage.data:
+        if key == canonical:
+            keys_to_delete.append(key)
+            continue
+        try:
+            if canonical_task_key(key) == canonical:
+                keys_to_delete.append(key)
+        except ValueError:
+            continue
+
+    if not keys_to_delete:
+        return canonical, False
+
+    for key in keys_to_delete:
+        del storage.data[key]
+
+    storage.save()
+    return canonical, True
+
+
+storage = Storage()
+migrate_storage_to_canonical(storage)
 
 
 @app.post("/public-key", tags=["Key Retrieval"])
@@ -540,7 +649,10 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
             raise HTTPException(status_code=400, detail="Missing required fields")
 
         # Normalize the address first (mask high bits to 00)
-        normalized_address = normalize_address(request.address[:12])
+        try:
+            normalized_address = canonical_exact_address(request.address)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid address format")
         normalized_prefix = normalized_address[:6]
         normalized_suffix = normalized_address[6:12]
 
@@ -556,7 +668,7 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
                 f"Key File Not Found: {normalized_prefix} {normalized_suffix} (original: {request.address[:12]})")
             await record_unfound_request(normalized_prefix, normalized_suffix)
             # Seeker expands the first-two-MSB-equivalent variants internally.
-            storage.set(normalized_address, "")
+            set_storage_task(normalized_address, "")
             raise HTTPException(status_code=404, detail="Key File Not Found, added for task")
 
         # Get file handle for normalized address
@@ -571,7 +683,7 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
         if priv_key == b'\0' * 28:
             await record_unfound_request(normalized_prefix, normalized_suffix)
             # Seeker expands the first-two-MSB-equivalent variants internally.
-            storage.set(normalized_address, "")
+            set_storage_task(normalized_address, "")
             raise HTTPException(status_code=404, detail="Key Record Not Found, added for task")
 
         logger.debug(f"Private key found: {priv_key.hex()}")
@@ -585,7 +697,7 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
             )
             public_key = private_key.public_key()
             public_hex_str = public_key.public_numbers().x.to_bytes(28, byteorder='big').hex()
-            storage.set(request.address[:12], priv_key.hex())
+            set_storage_task(normalized_address, priv_key.hex())
             return {"public_key": public_hex_str}
 
         except Exception as e:
@@ -617,20 +729,27 @@ async def review_key(request: GetPublicKey = GetPublicKey(prefix="1eadbe", suffi
     Returns:
         dict: Public key, private key, and SHA256 hash of public key
     """
+    try:
+        normalized_prefix = canonical_prefix(request.prefix)
+        normalized_suffix = canonical_suffix(request.suffix)
+        suffix_int = int(normalized_suffix, 16)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid prefix or suffix format")
+
     # Get file handle
-    if request.prefix in file_handles:
-        f = file_handles[request.prefix]
+    if normalized_prefix in file_handles:
+        f = file_handles[normalized_prefix]
     else:
-        if not if_dat_exists(f"{request.prefix}"):
-            await record_unfound_request(request.prefix, request.suffix)
-            return {"message": f"NOK, {request.prefix} Table not found"}
-        f = get_dat_handle(f"{request.prefix}")
-        file_handles[request.prefix] = f
+        if not if_dat_exists(normalized_prefix):
+            await record_unfound_request(normalized_prefix, normalized_suffix)
+            return {"message": f"NOK, {normalized_prefix} Table not found"}
+        f = get_dat_handle(normalized_prefix)
+        file_handles[normalized_prefix] = f
 
     # Read private key
-    priv_key = get_value_from_dat(f, int(request.suffix, 16))
+    priv_key = get_value_from_dat(f, suffix_int)
     if priv_key == b'\0' * 28:
-        await record_unfound_request(request.prefix, request.suffix)
+        await record_unfound_request(normalized_prefix, normalized_suffix)
         return {"message": "NOK, Private key not found"}
 
     # Generate key pair and hash
@@ -675,14 +794,19 @@ async def get_random_key(prefix: str):
     Returns:
         dict: Random public/private key pair from the table
     """
+    try:
+        normalized_prefix = canonical_prefix(prefix)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid prefix format")
+
     # Get file handle
-    if prefix in file_handles:
-        f = file_handles[prefix]
+    if normalized_prefix in file_handles:
+        f = file_handles[normalized_prefix]
     else:
-        if not if_dat_exists(f"{prefix}"):
+        if not if_dat_exists(normalized_prefix):
             return {"message": "NOK, Table not found"}
-        f = get_dat_handle(f"{prefix}")
-        file_handles[prefix] = f
+        f = get_dat_handle(normalized_prefix)
+        file_handles[normalized_prefix] = f
 
     # Keep trying random indices until we find a non-empty key
     priv_key = None
@@ -1188,16 +1312,22 @@ async def get_coverage(prefix: str):
     Returns:
         dict: Number of non-empty records in table
     """
+    try:
+        normalized_prefix = canonical_prefix(prefix)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid prefix format")
+
     # Check if data file exists
-    if prefix not in file_handles:
-        if not if_dat_exists(f"{prefix}"):
+    if normalized_prefix not in file_handles:
+        if not if_dat_exists(normalized_prefix):
             return {"message": "NOK, Table not found"}
 
     # Get file handle
-    if prefix in file_handles:
-        f = file_handles[prefix]
+    if normalized_prefix in file_handles:
+        f = file_handles[normalized_prefix]
     else:
-        f = get_dat_handle(f"{prefix}")
+        f = get_dat_handle(normalized_prefix)
+        file_handles[normalized_prefix] = f
 
     filename = f.name
     futures = []
@@ -1255,14 +1385,22 @@ async def delete_storage(request: DeleteRequest):
             logger.debug("Cleared all storage records")
             return {"message": "All storage records cleared successfully"}
 
-        # Delete specific key
-        if request.key in storage.data:
-            del storage.data[request.key]
-            storage.save()
-            logger.debug(f"Deleted storage record for key: {request.key}")
-            return {"message": f"Storage record for key '{request.key}' deleted successfully"}
+        # Delete specific key. Search tasks are stored in canonical form, but
+        # old equivalent aliases may still exist in hand-edited storage files.
+        try:
+            key, deleted = delete_storage_task(request.key)
+        except ValueError:
+            key = request.key
+            deleted = key in storage.data
+
+        if deleted:
+            if key in storage.data:
+                del storage.data[key]
+                storage.save()
+            logger.debug(f"Deleted storage record for key: {key}")
+            return {"message": f"Storage record for key '{key}' deleted successfully"}
         else:
-            logger.debug(f"Key not found in storage: {request.key}")
+            logger.debug(f"Key not found in storage: {key}")
             return {"message": "Key not found in storage"}
 
     except Exception as e:
@@ -1285,7 +1423,8 @@ async def get_executable(version: str = "11"):
 async def get_search_task():
     """
     Get search tasks as a newline-separated file.
-    Each line contains a 6-character prefix representing a task.
+    Each line contains a normalized task: either a 6-hex prefix or a
+    12-hex exact address. Seeker expands first-byte high-bit equivalents.
 
     Returns:
         Response: Plain text file with one task per line
@@ -1293,7 +1432,10 @@ async def get_search_task():
     candidates = storage.get_empty()
     tasks = set()
     for candidate in candidates:
-        tasks.add(candidate)
+        try:
+            tasks.add(canonical_task_key(candidate))
+        except ValueError:
+            logger.warning(f"Skipping invalid pending search task: {candidate}")
 
     # Convert set to newline-separated string
     task_content = '\n'.join(sorted(tasks))
@@ -1314,15 +1456,17 @@ async def add_search_task(prefix: PrefixRequest):
     This api adds a new search task to the storage.json.
 
     Args:
-        prefix: 6-character hex prefix (OUI) to add as a task
+        prefix: 6-character hex prefix or 12-character exact address to add as a task
 
     Returns:
         dict: Status message indicating task was added
     """
-    normalized_prefix = normalize_address(prefix.prefix)
-    storage.set(normalized_prefix, "")
+    try:
+        normalized_task = set_storage_task(prefix.prefix, "")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid task format")
 
-    return {"message": "Task added"}
+    return {"message": "Task added", "task": normalized_task}
 
 
 # Main Entry Point
@@ -1337,9 +1481,6 @@ if __name__ == "__main__":
     # Start background task scanner thread
     task_scanner_thread = threading.Thread(target=process_pending_tasks, daemon=True)
     task_scanner_thread.start()
-
-    # Initialize storage
-    storage = Storage()
 
     banner = '''
  ██████ ███    ██  ██████     ███████ ███████ ██████  ██    ██ ███████ ██████  
