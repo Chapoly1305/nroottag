@@ -46,6 +46,8 @@ __device__ __noinline__ void CheckPointPub(
   uint32_t lmi;
   uint32_t tid = (blockIdx.x * blockDim.x) + threadIdx.x;
   uint32_t *p32x;
+  uint8_t *p8x;
+  uint32_t remainingPrefix;
 
   {
     // If prefix is NULL, bypass prefix checking and make hit always true
@@ -58,25 +60,25 @@ __device__ __noinline__ void CheckPointPub(
     }
 
     if (hit) {
-      //      if (lookup32) {
-      //        off = lookup32[pr0];
-      //        l32 = px[13];
-      //        st = off;
-      //        ed = off + hit - 1;
-      //        while (st <= ed) {
-      //          mi = (st + ed) / 2;
-      //          lmi = lookup32[mi];
-      //          if (l32 < lmi) {
-      //            ed = mi - 1;
-      //          } else if (l32 == lmi) {
-      //            // found
-      //            goto addItem;
-      //          } else {
-      //            st = mi + 1;
-      //          }
-      //        }
-      //        return;
-      //      }
+      if (lookup32) {
+        off = lookup32[pr0];
+        p8x = (uint8_t *)px;
+        remainingPrefix =
+          ((uint32_t)p8x[25] << 24) |
+          ((uint32_t)p8x[24] << 16) |
+          ((uint32_t)p8x[23] << 8) |
+          ((uint32_t)p8x[22]);
+
+        for (uint32_t idx = 0; idx < hit; idx++) {
+          l32 = lookup32[off + idx * 2];
+          lmi = lookup32[off + idx * 2 + 1];
+          if (((remainingPrefix ^ l32) & lmi) == 0)
+            goto addItem;
+        }
+        return;
+      }
+
+    addItem:
       pos = atomicAdd(out, 1);
       if (pos < maxFound) {
         p32x = (uint32_t *)(px);
@@ -133,6 +135,31 @@ __device__ __noinline__ void CheckPrefix(
 #define CHECK_PREFIX(incr) CheckPrefix(mode, sPrefix, px, py, j *GRP_SIZE + (incr), lookup32, maxFound, out)
 
 // -----------------------------------------------------------------------------------------
+#define INV_WINDOW 64
+
+__device__ void _ModInvWindowed(uint64_t r[INV_WINDOW][4], uint64_t temp[INV_WINDOW][4], uint32_t count) {
+
+  uint64_t inverse[NBBLOCK];
+
+  Load256(temp[0], r[0]);
+  for (uint32_t i = 1; i < count; i++)
+    _ModMult(temp[i], temp[i - 1], r[i]);
+
+  Load256(inverse, temp[count - 1]);
+  inverse[4] = 0;
+  _ModInv(inverse);
+
+  for (int32_t i = (int32_t)count - 1; i > 0; i--) {
+    uint64_t newValue[4];
+    _ModMult(newValue, temp[i - 1], inverse);
+    _ModMult(inverse, r[i]);
+    Load256(r[i], newValue);
+  }
+
+  Load256(r[0], inverse);
+}
+
+// -----------------------------------------------------------------------------------------
 // Compute the x and y coordinates given a starting point
 // the amount of points computed is based on GRP_SIZE
 __device__ void ComputeKeys(
@@ -144,7 +171,8 @@ __device__ void ComputeKeys(
   uint32_t maxFound,
   uint32_t *out) {
 
-  uint64_t dx[GRP_SIZE / 2 + 1][4];
+  uint64_t dx[INV_WINDOW][4];
+  uint64_t temp[INV_WINDOW][4];
   uint64_t px[4];
   uint64_t py[4];
   uint64_t pyn[4];
@@ -169,16 +197,6 @@ __device__ void ComputeKeys(
 
   for (uint32_t j = 0; j < STEP_SIZE / GRP_SIZE; j++) {
 
-    // Fill group with delta x
-    uint32_t i;
-    for (i = 0; i < HSIZE; i++)
-      ModSub256(dx[i], Gx[i], sx);
-    ModSub256(dx[i], Gx[i], sx);     // For the first point
-    ModSub256(dx[i + 1], _2Gnx, sx); // For the next center point
-
-    // Compute modular inverse
-    _ModInvGrouped(dx);
-
     // We use the fact that P + i*G and P - i*G has the same deltax, so the same inverse
     // We compute key in the positive and negative way from the center of the group
 
@@ -187,68 +205,84 @@ __device__ void ComputeKeys(
 
     ModNeg256(pyn, py);
 
-    for (i = 0; i < HSIZE; i++) {
+    for (uint32_t base = 0; base < HSIZE; base += INV_WINDOW) {
 
-      // P = StartPoint + i*G
-      Load256(px, sx);
-      Load256(py, sy);
-      ModSub256(dy, Gy[i], py);
+      uint32_t windowSize = INV_WINDOW;
+      if (base + windowSize > HSIZE)
+        windowSize = HSIZE - base;
 
-      _ModMult(_s, dy, dx[i]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
-      _ModSqr(_p2, _s);        // _p2 = pow2(s)
+      for (uint32_t k = 0; k < windowSize; k++)
+        ModSub256(dx[k], Gx[base + k], sx);
 
-      ModSub256(px, _p2, px);
-      ModSub256(px, Gx[i]); // px = pow2(s) - p1.x - p2.x;
+      _ModInvWindowed(dx, temp, windowSize);
 
-      ModSub256(py, Gx[i], px);
-      _ModMult(py, _s);     // py = - s*(ret.x-p2.x)
-      ModSub256(py, Gy[i]); // py = - p2.y - s*(ret.x-p2.x);
+      for (uint32_t k = 0; k < windowSize; k++) {
 
-      CHECK_PREFIX(GRP_SIZE / 2 + (i + 1));
+        uint32_t i = base + k;
 
-      // P = StartPoint - i*G, if (x,y) = i*G then (x,-y) = -i*G
-      Load256(px, sx);
-      ModSub256(dy, pyn, Gy[i]);
+        // P = StartPoint + i*G
+        Load256(px, sx);
+        Load256(py, sy);
+        ModSub256(dy, Gy[i], py);
 
-      _ModMult(_s, dy, dx[i]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
-      _ModSqr(_p2, _s);        // _p = pow2(s)
+        _ModMult(_s, dy, dx[k]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
+        _ModSqr(_p2, _s);        // _p2 = pow2(s)
 
-      ModSub256(px, _p2, px);
-      ModSub256(px, Gx[i]); // px = pow2(s) - p1.x - p2.x;
+        ModSub256(px, _p2, px);
+        ModSub256(px, Gx[i]); // px = pow2(s) - p1.x - p2.x;
 
-      ModSub256(py, px, Gx[i]);
-      _ModMult(py, _s);         // py = s*(ret.x-p2.x)
-      ModSub256(py, Gy[i], py); // py = - p2.y - s*(ret.x-p2.x);
+        ModSub256(py, Gx[i], px);
+        _ModMult(py, _s);     // py = - s*(ret.x-p2.x)
+        ModSub256(py, Gy[i]); // py = - p2.y - s*(ret.x-p2.x);
 
-      CHECK_PREFIX(GRP_SIZE / 2 - (i + 1));
+        CHECK_PREFIX(GRP_SIZE / 2 + (i + 1));
+
+        // P = StartPoint - i*G, if (x,y) = i*G then (x,-y) = -i*G
+        Load256(px, sx);
+        ModSub256(dy, pyn, Gy[i]);
+
+        _ModMult(_s, dy, dx[k]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
+        _ModSqr(_p2, _s);        // _p = pow2(s)
+
+        ModSub256(px, _p2, px);
+        ModSub256(px, Gx[i]); // px = pow2(s) - p1.x - p2.x;
+
+        ModSub256(py, px, Gx[i]);
+        _ModMult(py, _s);         // py = s*(ret.x-p2.x)
+        ModSub256(py, Gy[i], py); // py = - p2.y - s*(ret.x-p2.x);
+
+        CHECK_PREFIX(GRP_SIZE / 2 - (i + 1));
+      }
     }
+
+    ModSub256(dx[0], Gx[HSIZE], sx); // For the first point
+    ModSub256(dx[1], _2Gnx, sx);     // For the next center point
+    _ModInvWindowed(dx, temp, 2);
 
     // First point (startP - (GRP_SZIE/2)*G)
     Load256(px, sx);
     Load256(py, sy);
-    ModNeg256(dy, Gy[i]);
+    ModNeg256(dy, Gy[HSIZE]);
     ModSub256(dy, py);
 
-    _ModMult(_s, dy, dx[i]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
+    _ModMult(_s, dy, dx[0]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
     _ModSqr(_p2, _s);        // _p = pow2(s)
 
     ModSub256(px, _p2, px);
-    ModSub256(px, Gx[i]); // px = pow2(s) - p1.x - p2.x;
+    ModSub256(px, Gx[HSIZE]); // px = pow2(s) - p1.x - p2.x;
 
-    ModSub256(py, px, Gx[i]);
+    ModSub256(py, px, Gx[HSIZE]);
     _ModMult(py, _s);         // py = s*(ret.x-p2.x)
-    ModSub256(py, Gy[i], py); // py = - p2.y - s*(ret.x-p2.x);
+    ModSub256(py, Gy[HSIZE], py); // py = - p2.y - s*(ret.x-p2.x);
 
     CHECK_PREFIX(0);
-
-    i++;
 
     // Next start point (startP + GRP_SIZE*G)
     Load256(px, sx);
     Load256(py, sy);
     ModSub256(dy, _2Gny, py);
 
-    _ModMult(_s, dy, dx[i]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
+    _ModMult(_s, dy, dx[1]); //  s = (p2.y-p1.y)*inverse(p2.x-p1.x)
     _ModSqr(_p2, _s);        // _p2 = pow2(s)
 
     ModSub256(px, _p2, px);

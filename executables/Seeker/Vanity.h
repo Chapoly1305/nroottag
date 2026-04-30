@@ -64,6 +64,7 @@ typedef struct {
   // For dreamer ;)
   bool isFull;
   prefixl_t lPrefix;
+  prefixl_t lPrefixMask;
   uint8_t hash160[20];
 
   Point pubkey;

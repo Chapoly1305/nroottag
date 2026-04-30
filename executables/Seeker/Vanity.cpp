@@ -28,6 +28,7 @@
 #include <iomanip>
 #include <sstream>
 #include <atomic>
+#include <set>
 
 #ifndef WIN64
 
@@ -41,6 +42,49 @@ std::atomic<size_t> currentAllocations{0};
 Point Gn[CPU_GRP_SIZE / 2];
 Point _2Gn;
 const double VanitySearch::FLUSH_INTERVAL = 3.0;
+
+static bool parseHexByte(const std::string &s, size_t offset, uint8_t &out) {
+  if (offset + 2 > s.size())
+    return false;
+
+  unsigned int value = 0;
+  if (sscanf(s.substr(offset, 2).c_str(), "%02x", &value) != 1)
+    return false;
+
+  out = (uint8_t)value;
+  return true;
+}
+
+static void buildEquivalentPublicPrefixes(const std::string &prefix, std::vector<std::string> &out) {
+  out.clear();
+
+  if (prefix.size() < 2) {
+    out.push_back(prefix);
+    return;
+  }
+
+  std::string upper = prefix;
+  std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+
+  uint8_t firstByte = 0;
+  if (!parseHexByte(upper, 0, firstByte)) {
+    out.push_back(prefix);
+    return;
+  }
+
+  const uint8_t lowSixBits = firstByte & 0x3F;
+  std::set<std::string> unique;
+  char byteHex[3];
+
+  for (uint8_t highBits = 0; highBits < 4; highBits++) {
+    std::string variant = upper;
+    snprintf(byteHex, sizeof(byteHex), "%02X", (highBits << 6) | lowSixBits);
+    variant[0] = byteHex[0];
+    variant[1] = byteHex[1];
+    if (unique.insert(variant).second)
+      out.push_back(variant);
+  }
+}
 // ----------------------------------------------------------------------------
 
 VanitySearch::VanitySearch(
@@ -142,11 +186,26 @@ VanitySearch::VanitySearch(
 
         } else {
 
-          if (initPrefix(inputPrefixes[i], &it)) {
-            bool *found = new bool;
-            *found = false;
-            it.found = found;
-            itPrefixes.push_back(it);
+          std::vector<std::string> publicPrefixVariants;
+          if (searchMode == SEARCH_PUBLICKEYS) {
+            buildEquivalentPublicPrefixes(inputPrefixes[i], publicPrefixVariants);
+          } else {
+            publicPrefixVariants.push_back(inputPrefixes[i]);
+          }
+
+          bool *found = new bool;
+          *found = false;
+
+          for (int j = 0; j < (int)publicPrefixVariants.size(); j++) {
+            if (initPrefix(publicPrefixVariants[j], &it)) {
+              it.found = found;
+              it.prefix = strdup(it.prefix);
+              itPrefixes.push_back(it);
+            }
+          }
+
+          if (itPrefixes.empty()) {
+            delete found;
           }
         }
 
@@ -190,6 +249,7 @@ VanitySearch::VanitySearch(
 
       // Second level lookup
       uint32_t unique_sPrefix = 0;
+      uint32_t totalGPUFilterEntries = 0;
       uint32_t minI = 0xFFFFFFFF;
       uint32_t maxI = 0;
       for (int i = 0; i < (int)prefixes.size(); i++) {
@@ -199,19 +259,23 @@ VanitySearch::VanitySearch(
           if (prefixes[i].items) {
             for (int j = 0; j < (int)prefixes[i].items->size(); j++) {
               lit.lPrefixes.push_back((*prefixes[i].items)[j].lPrefix);
+              lit.lPrefixes.push_back((*prefixes[i].items)[j].lPrefixMask);
             }
           }
-          sort(lit.lPrefixes.begin(), lit.lPrefixes.end());
           usedPrefixL.push_back(lit);
-          if ((uint32_t)lit.lPrefixes.size() > maxI)
-            maxI = (uint32_t)lit.lPrefixes.size();
-          if ((uint32_t)lit.lPrefixes.size() < minI)
-            minI = (uint32_t)lit.lPrefixes.size();
+          uint32_t entryCount = (uint32_t)lit.lPrefixes.size() / 2;
+          totalGPUFilterEntries += entryCount;
+          if (entryCount > maxI)
+            maxI = entryCount;
+          if (entryCount < minI)
+            minI = entryCount;
           unique_sPrefix++;
         }
         if (loadingProgress)
           printf("[Building lookup32 %.1f%%]\r", ((double)i * 100.0) / (double)prefixes.size());
       }
+
+      nbPrefix = totalGPUFilterEntries;
 
       if (loadingProgress)
         printf("\n");
@@ -372,7 +436,25 @@ bool VanitySearch::initPrefix(std::string &prefix, PREFIX_ITEM *it) {
 
     it->sPrefix = *(prefix_t *)&pt.x.bits16[NB16BLOCK - 7];
     it->isFull = false;
-    it->lPrefix = *(prefixl_t *)&pt.x.bits32[NB32BLOCK - 4];
+    uint32_t value = 0;
+    uint32_t mask = 0;
+    int byteLength = (int)prefix.size() / 2;
+    int fastBytes = std::min(6, byteLength);
+    for (int byteIndex = 2; byteIndex < 6; byteIndex++) {
+      value <<= 8;
+      mask <<= 8;
+      if (byteIndex < fastBytes) {
+        uint8_t byteValue = 0;
+        if (!parseHexByte(prefix, byteIndex * 2, byteValue)) {
+          printf("Ignoring prefix \"%s\" invalid hex byte\n", prefix.c_str());
+          return false;
+        }
+        value |= byteValue;
+        mask |= 0xFF;
+      }
+    }
+    it->lPrefix = value;
+    it->lPrefixMask = mask;
     it->prefix = (char *)prefix.c_str();
     it->prefixLength = (int)prefix.length();
 

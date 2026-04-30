@@ -455,14 +455,15 @@ void GPUEngine::SetPattern(const char *pattern) {
 
 void GPUEngine::SetPrefix(std::vector<LPREFIX> prefixes, uint32_t totalPrefix) {
 
+  uint32_t lookupWords = _64K + totalPrefix * 2;
+
   // Allocate memory for the second level of lookup tables
-  cudaError_t err = cudaMalloc((void **)&inputPrefixLookUp, (_64K + totalPrefix) * 4);
+  cudaError_t err = cudaMalloc((void **)&inputPrefixLookUp, lookupWords * 4);
   if (err != cudaSuccess) {
     printf("GPUEngine: Allocate prefix lookup memory: %s\n", cudaGetErrorString(err));
     return;
   }
-  err =
-    cudaHostAlloc(&inputPrefixLookUpPinned, (_64K + totalPrefix) * 4, cudaHostAllocWriteCombined | cudaHostAllocMapped);
+  err = cudaHostAlloc(&inputPrefixLookUpPinned, lookupWords * 4, cudaHostAllocWriteCombined | cudaHostAllocMapped);
   if (err != cudaSuccess) {
     printf("GPUEngine: Allocate prefix lookup pinned memory: %s\n", cudaGetErrorString(err));
     return;
@@ -470,24 +471,25 @@ void GPUEngine::SetPrefix(std::vector<LPREFIX> prefixes, uint32_t totalPrefix) {
 
   uint32_t offset = _64K;
   memset(inputPrefixPinned, 0, _64K * 2);
-  memset(inputPrefixLookUpPinned, 0, _64K * 4);
+  memset(inputPrefixLookUpPinned, 0, lookupWords * 4);
   for (int i = 0; i < (int)prefixes.size(); i++) {
-    int nbLPrefix = (int)prefixes[i].lPrefixes.size();
+    int nbLPrefix = (int)prefixes[i].lPrefixes.size() / 2;
     inputPrefixPinned[prefixes[i].sPrefix] = (uint16_t)nbLPrefix;
     inputPrefixLookUpPinned[prefixes[i].sPrefix] = offset;
     for (int j = 0; j < nbLPrefix; j++) {
-      inputPrefixLookUpPinned[offset++] = prefixes[i].lPrefixes[j];
+      inputPrefixLookUpPinned[offset++] = prefixes[i].lPrefixes[j * 2];
+      inputPrefixLookUpPinned[offset++] = prefixes[i].lPrefixes[j * 2 + 1];
     }
   }
 
-  if (offset != (_64K + totalPrefix)) {
-    printf("GPUEngine: Wrong totalPrefix %d!=%d!\n", offset - _64K, totalPrefix);
+  if (offset != lookupWords) {
+    printf("GPUEngine: Wrong totalPrefix %d!=%d!\n", (offset - _64K) / 2, totalPrefix);
     return;
   }
 
   // Fill device memory
   cudaMemcpy(inputPrefix, inputPrefixPinned, _64K * 2, cudaMemcpyHostToDevice);
-  cudaMemcpy(inputPrefixLookUp, inputPrefixLookUpPinned, (_64K + totalPrefix) * 4, cudaMemcpyHostToDevice);
+  cudaMemcpy(inputPrefixLookUp, inputPrefixLookUpPinned, lookupWords * 4, cudaMemcpyHostToDevice);
 
   // We do not need the input pinned memory anymore
   cudaFreeHost(inputPrefixPinned);

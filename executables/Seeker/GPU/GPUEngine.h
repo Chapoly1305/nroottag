@@ -52,6 +52,7 @@ typedef struct {
 // Second level lookup
 typedef struct {
   prefix_t sPrefix;
+  // value/mask pairs for public-key x bytes 3..6.
   std::vector<prefixl_t> lPrefixes;
 } LPREFIX;
 
