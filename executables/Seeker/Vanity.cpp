@@ -93,7 +93,7 @@ VanitySearch::VanitySearch(
   string seed,
   int searchMode,
   bool useGpu,
-  bool stop,
+  StopMode stopMode,
   string outputFile,
   bool useSSE,
   uint32_t maxFound,
@@ -116,7 +116,9 @@ VanitySearch::VanitySearch(
   this->secp = secp;
   this->searchMode = searchMode;
   this->useGpu = useGpu;
-  this->stopWhenFound = stop;
+  this->stopMode = stopMode;
+  this->stopTriggered = false;
+  this->remainingTargets = 0;
   this->outputFile = outputFile;
   this->useSSE = useSSE;
   this->nbGPUThread = 0;
@@ -173,12 +175,11 @@ VanitySearch::VanitySearch(
           vector<string> subList;
           enumCaseUnsentivePrefix(inputPrefixes[i], subList);
 
-          bool *found = new bool;
-          *found = false;
+          auto target = std::make_shared<PREFIX_TARGET_STATE>();
 
           for (int j = 0; j < (int)subList.size(); j++) {
             if (initPrefix(subList[j], &it)) {
-              it.found = found;
+              it.target = target;
               it.prefix = strdup(it.prefix); // We need to allocate here, subList will be destroyed
               itPrefixes.push_back(it);
             }
@@ -193,19 +194,14 @@ VanitySearch::VanitySearch(
             publicPrefixVariants.push_back(inputPrefixes[i]);
           }
 
-          bool *found = new bool;
-          *found = false;
+          auto target = std::make_shared<PREFIX_TARGET_STATE>();
 
           for (int j = 0; j < (int)publicPrefixVariants.size(); j++) {
             if (initPrefix(publicPrefixVariants[j], &it)) {
-              it.found = found;
+              it.target = target;
               it.prefix = strdup(it.prefix);
               itPrefixes.push_back(it);
             }
-          }
-
-          if (itPrefixes.empty()) {
-            delete found;
           }
         }
 
@@ -226,6 +222,7 @@ VanitySearch::VanitySearch(
 
           onlyFull &= it.isFull;
           nbPrefix++;
+          remainingTargets++;
         }
 
         if (loadingProgress && i % 1000 == 0)
@@ -569,19 +566,59 @@ void VanitySearch::writeToFile() {
 // ----------------------------------------------------------------------------
 
 bool pubKeyCompare(const Point &pt1, const Point &pt2, int len) {
+  constexpr int COORD_BYTES = 28;
   int idx = 0;
-  while (idx < len) {
+  int xLen = std::min(len, COORD_BYTES);
+  while (idx < xLen) {
     if (pt1.x.bits08[27 - idx] != pt2.x.bits08[27 - idx]) {
       return false;
     }
     ++idx;
   }
-  len -= 32;
-  while (idx < len) {
+
+  int yLen = len - COORD_BYTES;
+  idx = 0;
+  while (idx < yLen && idx < COORD_BYTES) {
     if (pt1.y.bits08[27 - idx] != pt2.y.bits08[27 - idx]) {
       return false;
     }
     ++idx;
+  }
+
+  return yLen <= COORD_BYTES;
+}
+
+bool VanitySearch::registerMatch(PREFIX_ITEM *item) {
+  if (stopMode == STOP_NEVER) {
+    nbFoundKey++;
+    return true;
+  }
+
+  if (stopMode == STOP_ANY) {
+    bool expected = false;
+    if (!stopTriggered.compare_exchange_strong(expected, true)) {
+      return false;
+    }
+    if (item && item->target)
+      item->target->found.store(true);
+    nbFoundKey++;
+    endOfSearch = true;
+    return true;
+  }
+
+  if (!item || !item->target) {
+    nbFoundKey++;
+    return true;
+  }
+
+  bool expected = false;
+  if (!item->target->found.compare_exchange_strong(expected, true)) {
+    return false;
+  }
+
+  nbFoundKey++;
+  if (remainingTargets.fetch_sub(1) == 1) {
+    endOfSearch = true;
   }
   return true;
 }
@@ -597,8 +634,9 @@ void VanitySearch::checkPubKey(int pi, Int &key, int32_t incr, int endomorphism,
     } else {
       k.Add((uint64_t)incr);
     }
-    nbFoundKey++;
-    output(pt.toString(), k.GetBase16());
+    PREFIX_ITEM *preitm = passThrough ? nullptr : &(*prefixes[pi].items)[0];
+    if (registerMatch(preitm))
+      output(pt.toString(), k.GetBase16());
     return;
   }
 
@@ -624,8 +662,8 @@ void VanitySearch::checkPubKey(int pi, Int &key, int32_t incr, int endomorphism,
       if (startPubKeySpecified)
         p = secp->AddDirect(p, sp);
       if (p.x.GetBase16() == pt.x.GetBase16()) {
-        nbFoundKey++;
-        output(p.toString(), k.GetBase16());
+        if (registerMatch(preitm))
+          output(p.toString(), k.GetBase16());
         return;
       } else {
         printf("Warn: Find 1 public key mismatch\n");
@@ -1100,6 +1138,7 @@ void VanitySearch::Search(int nbThread, std::vector<int> gpuId, std::vector<int>
   double t0;
   double t1;
   endOfSearch = false;
+  stopTriggered = false;
   nbCPUThread = nbThread;
   nbGPUThread = (useGpu ? (int)gpuId.size() : 0);
   nbFoundKey = 0;
@@ -1218,7 +1257,7 @@ void VanitySearch::Search(int nbThread, std::vector<int> gpuId, std::vector<int>
         totalElapsed,
         gpuKPS / 1e9,
         gpuAvgKPS / 1e9,
-        nbFoundKey,
+        nbFoundKey.load(),
         KPS,
         avgKPS);
       fflush(stdout);
@@ -1237,4 +1276,5 @@ void VanitySearch::Search(int nbThread, std::vector<int> gpuId, std::vector<int>
   }
 
   free(params);
+  writeToFile();
 }

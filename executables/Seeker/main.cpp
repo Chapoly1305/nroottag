@@ -33,7 +33,7 @@ using namespace std;
 
 void printUsage() {
 
-  printf("Seeker [-check] [-v] [-u] [-b] [-c] [-gpu] [-stop] [-i inputfile]\n");
+  printf("Seeker [-check] [-v] [-u] [-b] [-c] [-gpu] [-stop-all|-stop-any] [-i inputfile]\n");
   printf("             [-gpuId gpuId1[,gpuId2,...]] [-g g1x,g1y,[,g2x,g2y,...]]\n");
   printf("             [-o outputfile] [-m maxFound] [-ps seed] [-s seed] [-t nbThread]\n");
   printf("             [-nosse] [-r rekey] [-check] [-kp] [-sp startPubKey]\n");
@@ -45,7 +45,9 @@ void printUsage() {
   printf(" -p: Search public keys\n");
   printf(" -c: Case unsensitive search\n");
   printf(" -gpu: Enable gpu calculation\n");
-  printf(" -stop: Stop when all prefixes are found\n");
+  printf(" -stop-all: Stop when all requested prefixes are found\n");
+  printf(" -stop-any: Stop when any requested prefix is found\n");
+  printf(" -stop: Alias for -stop-all\n");
   printf(" -i inputfile: Get list of prefixes to search from specified file\n");
   printf(" -o outputfile: Output results to the specified file\n");
   printf(" -gpu gpuId1,gpuId2,...: List of GPU(s) to use, default is 0\n");
@@ -243,7 +245,7 @@ int main(int argc, char *argv[]) {
 
   int a = 1;
   bool gpuEnable = false;
-  bool stop = false;
+  StopMode stopMode = STOP_NEVER;
   int searchMode = SEARCH_COMPRESSED;
   vector<int> gpuId = {0};
   vector<int> gridSize;
@@ -270,8 +272,19 @@ int main(int argc, char *argv[]) {
       a++;
       getInts("gpuId", gpuId, string(argv[a]), ',');
       a++;
-    } else if (strcmp(argv[a], "-stop") == 0) {
-      stop = true;
+    } else if (strcmp(argv[a], "-stop") == 0 || strcmp(argv[a], "-stop-all") == 0) {
+      if (stopMode == STOP_ANY) {
+        printf("Error: -stop-all and -stop-any are mutually exclusive\n");
+        exit(-1);
+      }
+      stopMode = STOP_ALL;
+      a++;
+    } else if (strcmp(argv[a], "-stop-any") == 0) {
+      if (stopMode == STOP_ALL) {
+        printf("Error: -stop-all and -stop-any are mutually exclusive\n");
+        exit(-1);
+      }
+      stopMode = STOP_ANY;
       a++;
     } else if (strcmp(argv[a], "-c") == 0) {
       caseSensitive = false;
@@ -498,7 +511,7 @@ printf("Release " RELEASE "\n");
     seed,
     searchMode,
     gpuEnable,
-    stop,
+    stopMode,
     outputFile,
     sse,
     maxFound,

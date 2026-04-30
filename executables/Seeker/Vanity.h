@@ -22,6 +22,8 @@
 #include <string>
 #include <vector>
 #include <mutex>
+#include <atomic>
+#include <memory>
 #include "SECP224r1.h"
 #include "GPU/GPUEngine.h"
 #include "tsqueue.h"
@@ -34,6 +36,12 @@
 
 #define CPU_GRP_SIZE 1024
 class VanitySearch;
+
+enum StopMode {
+  STOP_NEVER = 0,
+  STOP_ALL,
+  STOP_ANY
+};
 
 typedef struct {
 
@@ -54,12 +62,18 @@ typedef struct {
 
 } CP_PARAM;
 
+struct PREFIX_TARGET_STATE {
+  std::atomic<bool> found;
+
+  PREFIX_TARGET_STATE() : found(false) {}
+};
+
 typedef struct {
 
   char *prefix;
   int prefixLength;
   prefix_t sPrefix;
-  bool *found;
+  std::shared_ptr<PREFIX_TARGET_STATE> target;
 
   // For dreamer ;)
   bool isFull;
@@ -90,7 +104,7 @@ public:
     std::string seed,
     int searchMode,
     bool useGpu,
-    bool stop,
+    StopMode stopMode,
     std::string outputFile,
     bool useSSE,
     uint32_t maxFound,
@@ -136,6 +150,7 @@ private:
   void checkAddresses(bool compressed, Int key, int i, Point p1);
   void checkPublicKeys(const Int &key, int i, const Point &p1, const Point &p2, const Point &p3, const Point &p4);
   void checkAddressesSSE(bool compressed, Int key, int i, Point p1, Point p2, Point p3, Point p4);
+  bool registerMatch(PREFIX_ITEM *item);
   void output(std::string pPubKey, std::string pAddrHex);
   void writeToFile();
   bool isAlive(TH_PARAM *p);
@@ -163,11 +178,12 @@ private:
   bool hasPattern;
   bool caseSensitive;
   bool useGpu;
-  bool stopWhenFound;
-  bool endOfSearch;
+  StopMode stopMode;
+  std::atomic<bool> stopTriggered;
+  std::atomic<bool> endOfSearch;
   int nbCPUThread;
   int nbGPUThread;
-  int nbFoundKey;
+  std::atomic<int> nbFoundKey;
   int nbFoundKeyLast;
   double accumulatedTime;
   double KPS;
@@ -175,6 +191,7 @@ private:
   uint64_t rekey;
   uint64_t lastRekey;
   uint32_t nbPrefix;
+  std::atomic<uint32_t> remainingTargets;
   std::string outputFile;
   bool useSSE;
   bool onlyFull;
