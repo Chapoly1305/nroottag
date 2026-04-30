@@ -135,7 +135,14 @@ __device__ __noinline__ void CheckPrefix(
 #define CHECK_PREFIX(incr) CheckPrefix(mode, sPrefix, px, py, j *GRP_SIZE + (incr), lookup32, maxFound, out)
 
 // -----------------------------------------------------------------------------------------
-#define INV_WINDOW 64
+// Window size for Montgomery batch inversion inside each CUDA thread.
+// This is not tied to SM count or warp-lane mapping. It trades fewer _ModInv()
+// calls against larger per-thread local arrays:
+//   dx + temp = 2 * INV_WINDOW * 4 * sizeof(uint64_t) = 64 * INV_WINDOW bytes.
+// RTX 4090 tuning showed 16 under-amortizes inversions, while 64/96/128 grow
+// the local stack enough to hurt cache/occupancy; 32 was the best observed
+// balance with GRP_SIZE=1024 and -g 4096,384.
+#define INV_WINDOW 32
 
 __device__ void _ModInvWindowed(uint64_t r[INV_WINDOW][4], uint64_t temp[INV_WINDOW][4], uint32_t count) {
 

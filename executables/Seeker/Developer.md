@@ -128,7 +128,33 @@ For public-key prefix searches, Seeker first uses a 16-bit bucket lookup, then a
 
 CPU validation remains as a correctness guard. Only GPU-filtered candidates are transferred to CPU, where the private key is reconstructed from the thread ID and increment, and the public key is recomputed and checked before output/storage.
 
-The current optimized CUDA path also uses windowed modular inversion to reduce per-thread local-memory pressure, and the build caps CUDA register allocation with `-maxrregcount=112`. On RTX 4090, this is why `384` threads per block is now a better observed tuning point than the older `512`-thread guidance.
+The current optimized CUDA path uses windowed modular inversion. `INV_WINDOW` is a per-thread batch-inversion window, not an SM-count or warp-lane mapping. Increasing it reduces the number of `_ModInv()` calls, but it also increases per-thread local arrays:
+
+```
+dx + temp = 2 * INV_WINDOW * 4 * sizeof(uint64_t)
+          = 64 * INV_WINDOW bytes per thread before compiler overhead
+```
+
+On RTX 4090, local benchmarking with `GRP_SIZE=1024`, `-g 4096,384`, and CUDA 12.9 showed that `INV_WINDOW=32` was the best tested balance. `INV_WINDOW=16` reduced stack pressure further, but under-amortized modular inversions. Larger windows, such as 64, 96, and 128, reduced inversion count but increased local stack/cache pressure enough to slow the kernel.
+
+Observed RTX 4090 tuning data:
+
+| Configuration | Avg GPU speed |
+| --- | ---: |
+| `INV_WINDOW=16`, `maxrregcount=112` | 10.34 Gkey/s |
+| `INV_WINDOW=32`, `maxrregcount=112` | 10.76 Gkey/s |
+| `INV_WINDOW=64`, `maxrregcount=112` | 10.10 Gkey/s |
+| `INV_WINDOW=96`, `maxrregcount=112` | 9.66 Gkey/s |
+| `INV_WINDOW=128`, `maxrregcount=112` | 9.00 Gkey/s |
+| `INV_WINDOW=32`, `maxrregcount=120` | 11.10 Gkey/s in a longer confirmation run |
+
+For this reason the default kernel uses `INV_WINDOW=32`, and the CUDA build defaults to `MAXRREGCOUNT=120`. The Makefile leaves `MAXRREGCOUNT` overrideable so other GPUs can be tested without editing the file:
+
+```
+make gpu=1 CCAP=89 CUDA=/usr/local/cuda-12 CXXCUDA=/usr/bin/g++ MAXRREGCOUNT=112 all
+```
+
+These values are empirical defaults, not universal constants. For GPUs with different local-memory/cache behavior, re-run the sweep before assuming the same optimum. On RTX 4090, `384` threads per block remains a stable tuning point for this windowed-inversion kernel.
 
 
 ### Transfer Efficiency
@@ -279,6 +305,5 @@ known endomorphisms.
 For secp224r1, there might be some improvement to use 224/288 instead of 256/320 bit size.
 This would result in one less operation for each instruction set across addition, subtraction,
 and multiplication. CUDA emulates 64 bits operations, but this would increase code complexity.
-
 
 
