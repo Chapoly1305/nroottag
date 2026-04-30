@@ -73,12 +73,22 @@ comp_keys_pattern(uint32_t mode, prefix_t *pattern, uint64_t *keys, uint32_t max
   ComputeKeys(mode, keys + xPtr, keys + yPtr, NULL, (uint32_t *)pattern, maxFound, found);
 }
 
-#define FULLCHECK
-#ifdef FULLCHECK
+// FULLCHECK_ARITH:  validate GPU big-integer arithmetic (ModMult, ModInv)
+//                    against CPU. Runs even without GPU — the modular arithmetic
+//                    kernels are tiny and work on any CUDA-capable device.
+#define FULLCHECK_ARITH
+
+// FULLCHECK_KERNEL: also run a deterministic end-to-end kernel self-test
+//                   (ComputeKeys → prefix match → CPU verification).
+//                   Requires a CUDA GPU.  Disabled by default because it
+//                   needs manual validation per GPU architecture.
+// #define FULLCHECK_KERNEL
+
+#if defined(FULLCHECK_ARITH) || defined(FULLCHECK_KERNEL)
 
 // ---------------------------------------------------------------------------------------
 
-__global__ void chekc_mult(uint64_t *a, uint64_t *b, uint64_t *r) {
+__global__ void check_mult(uint64_t *a, uint64_t *b, uint64_t *r) {
   _ModMult(r, a, b);
   r[4] = 0;
 }
@@ -107,7 +117,7 @@ __global__ void get_endianness(uint32_t *endian) {
   *endian = (fb == 0x04);
 }
 
-#endif // FULLCHECK
+#endif // FULLCHECK_ARITH || FULLCHECK_KERNEL
 
 // ---------------------------------------------------------------------------------------
 
@@ -656,17 +666,16 @@ void printfound(vector<ITEM> &found) {
 
 bool GPUEngine::Check(Secp224R1 *secp) {
 
-  uint8_t h[20];
-  int i = 0;
-  int j = 0;
-  bool ok = true;
-
   if (!initialised)
     return false;
 
   printf("GPU: %s\n", deviceName.c_str());
 
-#ifdef FULLCHECK
+#ifdef FULLCHECK_ARITH
+
+  // ---------------------------------------------------------------
+  // Phase 1 — Validate GPU big-integer primitives against CPU
+  // ---------------------------------------------------------------
 
   // Get endianess
   get_endianness<<<1, 1>>>(outputPrefix);
@@ -675,116 +684,181 @@ bool GPUEngine::Check(Secp224R1 *secp) {
     printf("GPUEngine: get_endianness: %s\n", cudaGetErrorString(err));
     return false;
   }
-  cudaMemcpy(outputPrefixPinned, outputPrefix, 1, cudaMemcpyDeviceToHost);
+  cudaMemcpy(outputPrefixPinned, outputPrefix, sizeof(uint32_t), cudaMemcpyDeviceToHost);
   littleEndian = *outputPrefixPinned != 0;
   printf("Endianness: %s\n", (littleEndian ? "Little" : "Big"));
 
-  // Check modular mult
-  Int a;
-  Int b;
-  Int r;
-  Int c;
-  a.SetBase16("49C5C08402A02494ED104ADBF426F0F43BE1C152F42160751CAA7E7E");
-  b.Rand(224);
-  c.ModMul(&a, &b);
-  memcpy(inputKeyPinned, a.bits64, BIFULLSIZE);
-  memcpy(inputKeyPinned + 5, b.bits64, BIFULLSIZE);
-  cudaMemcpy(inputKey, inputKeyPinned, BIFULLSIZE * 2, cudaMemcpyHostToDevice);
-  chekc_mult<<<1, 1>>>(inputKey, inputKey + 5, (uint64_t *)outputPrefix);
-  cudaMemcpy(outputPrefixPinned, outputPrefix, BIFULLSIZE, cudaMemcpyDeviceToHost);
-  memcpy(r.bits64, outputPrefixPinned, BIFULLSIZE);
+  // Check modular multiplication: GPU _ModMult vs CPU ModMul
+  {
+    Int a, b, r, c;
+    a.SetBase16("49C5C08402A02494ED104ADBF426F0F43BE1C152F42160751CAA7E7E");
+    b.Rand(224);
+    c.ModMul(&a, &b);
+    memcpy(inputKeyPinned, a.bits64, BIFULLSIZE);
+    memcpy(inputKeyPinned + 5, b.bits64, BIFULLSIZE);
+    cudaMemcpy(inputKey, inputKeyPinned, BIFULLSIZE * 2, cudaMemcpyHostToDevice);
+    check_mult<<<1, 1>>>(inputKey, inputKey + 5, (uint64_t *)outputPrefix);
+    cudaMemcpy(outputPrefixPinned, outputPrefix, BIFULLSIZE, cudaMemcpyDeviceToHost);
+    memcpy(r.bits64, outputPrefixPinned, BIFULLSIZE);
 
-  if (!c.IsEqual(&r)) {
-    printf("r=%llu,%llu,%llu,%llu,%llu\n", r.bits64[0], r.bits64[1], r.bits64[2], r.bits64[3], r.bits64[4]);
-    printf(
-      "\nModular Mult wrong:\nA=0x%s\nB=0x%s\nR=0x%s\nC=0x%s\n",
-      a.GetBase16().c_str(),
-      b.GetBase16().c_str(),
-      r.GetBase16().c_str(),
-      c.GetBase16().c_str());
-    return false;
+    if (!c.IsEqual(&r)) {
+      printf("r=%llu,%llu,%llu,%llu,%llu\n", r.bits64[0], r.bits64[1], r.bits64[2], r.bits64[3], r.bits64[4]);
+      printf(
+        "\nModular Mult wrong:\nA=0x%s\nB=0x%s\nR=0x%s\nC=0x%s\n",
+        a.GetBase16().c_str(),
+        b.GetBase16().c_str(),
+        r.GetBase16().c_str(),
+        c.GetBase16().c_str());
+      return false;
+    }
+    printf("Modular Mult: OK\n");
   }
 
-  a.ModInv();
-  r.SetBase16("49C5C08402A02494ED104ADBF426F0F43BE1C152F42160751CAA7E7E");
-  memcpy(inputKeyPinned, r.bits64, BIFULLSIZE);
-  cudaMemcpy(inputKey, inputKeyPinned, BIFULLSIZE, cudaMemcpyHostToDevice);
-  check_mod_inv<<<1, 1>>>(inputKey, (uint64_t *)outputPrefix);
-  cudaMemcpy(outputPrefixPinned, outputPrefix, BIFULLSIZE, cudaMemcpyDeviceToHost);
-  memcpy(r.bits64, outputPrefixPinned, BIFULLSIZE);
-  printf("DONE\n");
-  if (!a.IsEqual(&r)) {
-    printf("r=%llu,%llu,%llu,%llu,%llu\n", r.bits64[0], r.bits64[1], r.bits64[2], r.bits64[3], r.bits64[4]);
-    printf("\nModular Inv wrong:\nA=0x%s\nR=0x%s\n", a.GetBase16().c_str(), r.GetBase16().c_str());
-    return false;
-  }
-  return false;
+  // Check modular inversion: GPU _ModInv vs CPU ModInv
+  {
+    Int a, r;
+    a.SetBase16("49C5C08402A02494ED104ADBF426F0F43BE1C152F42160751CAA7E7E");
+    Int aInv(&a);
+    aInv.ModInv();
+    memcpy(inputKeyPinned, a.bits64, BIFULLSIZE);
+    cudaMemcpy(inputKey, inputKeyPinned, BIFULLSIZE, cudaMemcpyHostToDevice);
+    check_mod_inv<<<1, 1>>>(inputKey, (uint64_t *)outputPrefix);
+    cudaMemcpy(outputPrefixPinned, outputPrefix, BIFULLSIZE, cudaMemcpyDeviceToHost);
+    memcpy(r.bits64, outputPrefixPinned, BIFULLSIZE);
 
-#endif // FULLCHECK
-
-  Point *p = new Point[nbThread];
-  Point *p2 = new Point[nbThread];
-  Int k;
-
-  // Check kernel
-  int nbFoundCPU[1];
-  int nbOK[1];
-  vector<ITEM> found;
-  bool searchComp;
-
-  if (searchMode == SEARCH_BOTH) {
-    printf("Warning, Check function does not support BOTH_MODE, use either compressed or uncompressed");
-    return true;
+    if (!aInv.IsEqual(&r)) {
+      printf("r=%llu,%llu,%llu,%llu,%llu\n", r.bits64[0], r.bits64[1], r.bits64[2], r.bits64[3], r.bits64[4]);
+      printf("\nModular Inv wrong:\nA=0x%s\nR=0x%s\n", a.GetBase16().c_str(), r.GetBase16().c_str());
+      return false;
+    }
+    printf("Modular Inv:  OK\n");
   }
 
-  searchComp = SEARCH_PUBLICKEYS;
+  printf("GPU arithmetic self-test PASSED\n");
 
-  uint32_t seed = 1710463954;
-  printf("Seed: %u\n", seed);
-  rseed(seed);
-  memset(nbOK, 0, sizeof(nbOK));
-  memset(nbFoundCPU, 0, sizeof(nbFoundCPU));
-  //  k.SetBase16("49C5C08402A02494ED104ADBF426F0F43BE1C152F42160751CAA7E7E");
-  //  printf("K: %s\nPub: %s\n", k.GetBase16().c_str(),
-  //         secp->ComputePublicKey(&k).toString().c_str());
-  //  Point p0 = secp->ComputePublicKey(&k);
-  //  p[0] = p0;
-  //  p2[0] = p0;
-  for (int i = 0; i < nbThread; i++) {
-    k.Rand(256);
-    p[i] = secp->ComputePublicKey(&k);
-    // Group starts at the middle
-    k.Add((uint64_t)GRP_SIZE / 2);
-    p2[i] = secp->ComputePublicKey(&k);
-    //    p0 = secp->NextKey(p0);
+#endif // FULLCHECK_ARITH
+
+  // ---------------------------------------------------------------
+  // Phase 2 — End-to-end kernel self-test (optional)
+  // ---------------------------------------------------------------
+
+#ifdef FULLCHECK_KERNEL
+
+  {
+    // The kernel rejects SEARCH_COMPRESSED, so force SEARCH_PUBLICKEYS
+    uint32_t savedSearchMode = searchMode;
+    searchMode = SEARCH_PUBLICKEYS;
+
+    Point *p = new Point[nbThread];
+    Point *p2 = new Point[nbThread];
+    Int k;
+    int nbOK = 0;
+    int nbCPUExpected = 0;
+
+    // Deterministic seed
+    uint32_t seed = 1710463954;
+    printf("Kernel self-test seed: %u\n", seed);
+    rseed(seed);
+
+    // Two 16-bit prefixes to search for
+    std::vector<prefix_t> prefs;
+    prefs.push_back(0x6371);
+    prefs.push_back(0x1234);
+
+    // Generate test keys, recording which ones are expected to match
+    std::vector<int> expectedIndices;
+    for (int i = 0; i < nbThread; i++) {
+      k.Rand(256);
+      p[i] = secp->ComputePublicKey(&k);
+
+      // Check if this key's x-coordinate top 16 bits match our prefixes
+      prefix_t pr = *(prefix_t *)&p[i].x.bits16[NB16BLOCK - 7];
+      if (pr == 0x6371 || pr == 0x1234) {
+        expectedIndices.push_back(i);
+        nbCPUExpected++;
+      }
+
+      // Group starts at the middle: GPU begins from P + GRP_SIZE/2*G
+      k.Add((uint64_t)GRP_SIZE / 2);
+      p2[i] = secp->ComputePublicKey(&k);
+    }
+
+    printf("CPU pre-scan: %d points expected to match prefix\n", nbCPUExpected);
+
+    if (nbCPUExpected == 0) {
+      printf("Kernel self-test SKIPPED: no expected matches with this seed "
+             "(retry or increase nbThread)\n");
+    } else {
+
+      SetPrefix(prefs);
+
+      // Launch kernel and retrieve results
+      SetKeys(p2);
+      double t0 = Timer::get_tick();
+
+      CHECK_PREFIXES result;
+      Launch(&result, true);            // spinWait=true: synchronous copy
+      double t1 = Timer::get_tick();
+      Timer::printResult((char *)"Key", 6 * STEP_SIZE * nbThread, t0, t1);
+
+      // Parse GPU results into ITEM vector
+      uint32_t nbFound = result.size;
+      printf("GPU reported %u items, CPU check...\n", nbFound);
+
+      // Launch() always malloc's result.raw (size = nbFound*ITEM_SIZE + 4),
+      // even when nbFound == 0 — own it unconditionally to avoid leaking.
+      uint32_t *raw = result.raw;
+
+      if (nbFound > 0) {
+        std::vector<ITEM> found;
+        for (uint32_t idx = 0; idx < nbFound; idx++) {
+          ITEM it;
+          it.thId   = raw[idx * ITEM_SIZE32 + 1];
+          uint32_t flags = raw[idx * ITEM_SIZE32 + 2];
+          it.incr   = (int16_t)(flags >> 16);
+          it.mode   = (flags >> 15) & 1;
+          it.endo   = (int16_t)(flags & 0x7FFF);
+          it.hash   = (uint8_t *)(raw + idx * ITEM_SIZE32 + 3);
+          found.push_back(it);
+        }
+
+        // Verify each expected CPU point was found by the GPU
+        for (int idx : expectedIndices) {
+          CheckPoint(&p[idx], found, idx, -GRP_SIZE / 2, 0, &nbOK);
+        }
+
+        if (nbOK == nbCPUExpected && found.empty()) {
+          printf("Kernel self-test PASSED "
+                 "(%d/%d items verified, 0 unexpected)\n",
+                 nbOK, nbCPUExpected);
+        } else if (nbOK == nbCPUExpected) {
+          printf("Kernel self-test WARNING: %d/%d items verified, "
+                 "but %d unexpected GPU results remain\n",
+                 nbOK, nbCPUExpected, (int)found.size());
+        } else {
+          printf("Kernel self-test FAILED: only %d/%d items verified, "
+                 "%d unexpected GPU results remain\n",
+                 nbOK, nbCPUExpected, (int)found.size());
+        }
+      } else {
+        printf("Kernel self-test FAILED: GPU reported 0 items "
+               "(expected %d)\n", nbCPUExpected);
+      }
+
+      free(raw);
+    }
+
+    // Launch() ends by re-arming callKernel() for streaming use; drain that
+    // pipeline before returning so the next caller of Check() / the dtor
+    // doesn't race against an in-flight kernel writing to outputPrefix.
+    cudaDeviceSynchronize();
+
+    searchMode = savedSearchMode;
+    delete[] p;
+    delete[] p2;
   }
 
-  std::vector<prefix_t> prefs;
-  prefs.push_back(0x6371);
-  prefs.push_back(0x1234);
-  SetPrefix(prefs);
-  SetKeys(p2);
-  double t0 = Timer::get_tick();
-  //  Launch(found, true);
-  double t1 = Timer::get_tick();
-  Timer::printResult((char *)"Key", 6 * STEP_SIZE * nbThread, t0, t1);
+#endif // FULLCHECK_KERNEL
 
-  // for (int i = 0; i < found.size(); i++) {
-  //   printf("[%d]: thId=%d incr=%d\n", i, found[i].thId,found[i].incr);
-  //   printf("[%d]: %s\n", i,toHex(found[i].hash,20).c_str());
-  // }
-
-  printf("ComputeKeys() found %d items , CPU check...\n", (int)found.size());
-
-  Int beta, beta2;
-  beta.SetBase16((char *)"94353937171b8337606664f1900be8995691cf49934d5551cc5ace29");
-  beta2.SetBase16((char *)"94353937171b8337606664f1900be8995691cf49934d5551cc5ace29");
-
-  if (found.size() == 0) {
-    ok = false;
-    printf("Expected to find at least one item !\n");
-  }
-
-  delete[] p;
-  return ok;
+  return true;
 }

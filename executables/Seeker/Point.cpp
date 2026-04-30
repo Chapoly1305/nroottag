@@ -56,6 +56,7 @@ Point::~Point() {}
 void Point::Set(Point &p) {
   x.Set(&p.x);
   y.Set(&p.y);
+  z.Set(&p.z);
 }
 
 bool Point::isZero() { return x.IsZero() && y.IsZero(); }

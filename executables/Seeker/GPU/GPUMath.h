@@ -863,11 +863,22 @@ __device__ void _ModMult(uint64_t *r, uint64_t *a, uint64_t *b) {
   ShiftL32((uint32_t *)(tt));
   Sub1(tt, sub);
 
-  // Reduce from 320 to 224
-  UADDO(r[0], r512[0], tt[0]);
-  UADDC(r[1], r512[1], tt[1]);
-  UADDC(r[2], r512[2], tt[2]);
-  UADDC(r[3], (uint64_t)((uint32_t)(r512[3])), tt[3]);
+  // Reduce from 320 to 224 into a 5-limb staged buffer. The value is in
+  // [0, 2P); the top sign limb is zero so _IsPositive() is well-defined.
+  uint64_t staged[NBBLOCK];
+  UADDO(staged[0], r512[0], tt[0]);
+  UADDC(staged[1], r512[1], tt[1]);
+  UADDC(staged[2], r512[2], tt[2]);
+  UADDC(staged[3], (uint64_t)((uint32_t)(r512[3])), tt[3]);
+  staged[4] = 0;
+
+  // Final canonicalization. Without this, results in [P, 2P) — common when
+  // the true residue is small (e.g. x * x^-1 = 1) — leak through. The CPU
+  // ModMulR1 has the same fix; see IntMod.cpp.
+  uint64_t reduced[NBBLOCK];
+  Sub2(reduced, staged, _P);
+  if (_IsPositive(reduced))
+    Load256(r, reduced) else Load256(r, staged)
 }
 
 // ---------------------------------------------------------------------------------------

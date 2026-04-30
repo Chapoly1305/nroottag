@@ -280,40 +280,82 @@ int main(int argc, char *argv[]) {
       printf("%s\n", RELEASE);
       exit(0);
     } else if (strcmp(argv[a], "-check") == 0) {
-      // Check modular mult
-      Int a;
-      Int b;
-      Int c;
-      Int d;
+      // Cross-validate CPU modular multiplication methods
+      Int a, b, c, d;
       a.SetBase16("9EABF932365A7215BA638A8F11E5E4A6F5AC7CC42082B3160895FC8F");
       b.SetBase16("A6445595DDD941827134B378868A79D11914240B9F21E3522C8333A6");
       c.ModMul(&a, &b);
-      d.ModMulR1(&a, &b);
       Int::InitR1();
+      d.ModMulR1(&a, &b);
       printf(
-        "A=0x%s\nB=0x%s\nC=0x%s\nD=0x%s\n",
+        "A=0x%s\nB=0x%s\nModMul=0x%s\nModMulR1=0x%s\n",
         a.GetBase16().c_str(),
         b.GetBase16().c_str(),
         c.GetBase16().c_str(),
         d.GetBase16().c_str());
-      //      Int::Check();
-      //      secp->Check();
+      if (c.IsEqual(&d)) {
+        printf("CPU ModMul vs ModMulR1: OK\n");
+      } else {
+        printf("CPU ModMul vs ModMulR1: MISMATCH\n");
+      }
       printf("R1=%s\n", Int::GetR()->GetBase16().c_str());
       printf("R2=%s\n", Int::GetR2()->GetBase16().c_str());
       printf("R3=%s\n", Int::GetR3()->GetBase16().c_str());
       printf("R4=%s\n", Int::GetR4()->GetBase16().c_str());
       printf("MM64=%#016lx\n", Int::GetMM64());
 
+      // Direct ModInv self-test — verifies a * ModInv(a) ≡ 1 (mod p) for
+      // several values. Catches a corrupted DivStep62 / shim before secp
+      // table construction silently produces on-curve-but-wrong points.
+      {
+        const char *testVals[] = {
+          "49C5C08402A02494ED104ADBF426F0F43BE1C152F42160751CAA7E7E",
+          "9EABF932365A7215BA638A8F11E5E4A6F5AC7CC42082B3160895FC8F",
+          "B70E0CBD6BB4BF7F321390B94A03C1D356C21122343280D6115C1D21",
+          "00000000000000000000000000000000000000000000000000000002",
+        };
+        bool modInvOk = true;
+        Int one;
+        one.SetInt32(1);
+        for (size_t k = 0; k < sizeof(testVals) / sizeof(testVals[0]); k++) {
+          Int x;
+          x.SetBase16((char *)testVals[k]);
+          Int xinv(&x);
+          xinv.ModInv();
+          Int prod;
+          prod.ModMul(&x, &xinv);
+          if (!prod.IsEqual(&one)) {
+            printf("ModInv FAIL on %s\n  inv  = %s\n  prod = %s\n",
+                   testVals[k],
+                   xinv.GetBase16().c_str(),
+                   prod.GetBase16().c_str());
+            modInvOk = false;
+          }
+        }
+        printf("CPU ModInv: %s\n", modInvOk ? "OK" : "FAIL");
+      }
+
+      // secp->Check() runs the EC sanity tests (generator table, Add, Double,
+      // GenKey known-answer). Cheap — keep it on so any regression in CPU
+      // curve math fails -check loudly instead of silently passing.
+      secp->Check();
+      // Int::Check() is a multi-second arithmetic benchmark; off by default.
+      //      Int::Check();
+
 #ifdef WITHGPU
       if (gridSize.size() == 0) {
-        gridSize.push_back(-1); // gridSize X, Let CUDA Determine based on num of SM, 32*SM is found best. 
-        gridSize.push_back(512); // gridSize Y. We tested the optimal is 512, greater will crash. 
+        gridSize.push_back(-1); // gridSize X — auto-detect from SM count
+        gridSize.push_back(512); // gridSize Y
       }
       GPUEngine g(gridSize[0], gridSize[1], gpuId[0], maxFound, false);
       g.SetSearchMode(searchMode);
-      g.Check(secp);
+      bool gpuOk = g.Check(secp);
+      printf("GPU self-test: %s\n", gpuOk ? "PASSED" : "FAILED");
+      if (!gpuOk) {
+        exit(1);
+      }
 #else
-      printf("GPU code not compiled, use -DWITHGPU when compiling.\n");
+      printf("GPU code not compiled, skipping GPU self-test\n");
 #endif
       exit(0);
     } else if (strcmp(argv[a], "-l") == 0) {
@@ -402,7 +444,11 @@ int main(int argc, char *argv[]) {
       rekey = (uint64_t)getInt("rekey", argv[a]);
       a++;
     } else if (strcmp(argv[a], "-generateCode") == 0) {
+#ifdef WITHGPU
       GPUEngine::GenerateCode(secp, 1024);
+#else
+      printf("GPU code not compiled, use -DWITHGPU when compiling.\n");
+#endif
       return 0;
     } else if (strcmp(argv[a], "-h") == 0) {
       printUsage();

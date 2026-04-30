@@ -96,12 +96,16 @@ void Secp224R1::Check() {
   PrintResult(EC(R3));
 
   printf("Check GenKey :");
+  // Known-answer test for SECP224R1.
+  // Private key (256 bits, but ComputePublicKey only consumes the low 224 bits
+  // little-endian, so the effective scalar is the lower 56 hex chars below).
+  // Expected x/y verified against Python `cryptography`'s SECP224R1 backend.
   Int privKey;
   privKey.SetBase16("46b9e861b63d3509c88b7817275a30d22d62c8cd8fa6486ddee35ef0d8e0495f");
   Point pub = ComputePublicKey(&privKey);
   Point expectedPubKey;
-  expectedPubKey.x.SetBase16("2500e7f3fbddf2842903f544ddc87494ce95029ace4e257d54ba77f2bc1f3a88");
-  expectedPubKey.y.SetBase16("37a9461c4f1c57fecc499753381e772a128a5820a924a2fa05162eb662987a9f");
+  expectedPubKey.x.SetBase16("BC7AFA6E8450E6423E5E01281E0BF8C4C669EE15ECBB982BE2474DB0");
+  expectedPubKey.y.SetBase16("8E7422F6E683246C4018CE5992B9D5FDEDE8CB1811582B8CE03EF6FA");
   expectedPubKey.z.SetInt32(1);
 
   PrintResult(pub.equals(expectedPubKey));

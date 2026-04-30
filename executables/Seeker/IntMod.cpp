@@ -1346,6 +1346,15 @@ void Int::ModMulR1(Int *a, Int *b) {
   c = _addcarry_u64(c, (uint64_t)((uint32_t)(r512[3])), ttHigh.bits64[3], bits64 + 3);
 
   bits64[4] = 0;
+
+  // Final canonicalization. The two-stage fold above leaves the result in
+  // [0, 2P) — usually < P, but for products whose true residue is small (e.g.
+  // x * x^-1 = 1) it lands at P+k. Without this subtract IsEqual() and any
+  // downstream code that compares Ints byte-wise will treat P+k != k.
+  Int reduced;
+  reduced.Sub(this, &_P);
+  if (reduced.IsPositive())
+    Set(&reduced);
 }
 
 void Int::ModMulR1(Int *a) { ModMulR1(a, this); }
