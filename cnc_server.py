@@ -440,25 +440,6 @@ def insert_data(request: InsertRequest):
         raise
 
 
-def address_mutate(address: str):
-    address_collection = []
-    address_bytes = bytearray.fromhex(address)
-
-    address_bytes[0] = address_bytes[0] & 0x3F
-    address_collection.append(address_bytes.hex())
-
-    address_bytes[0] = address_bytes[0] & 0x3F | 0x40
-    address_collection.append(address_bytes.hex())
-
-    address_bytes[0] = address_bytes[0] & 0x3F | 0x80
-    address_collection.append(address_bytes.hex())
-
-    address_bytes[0] = address_bytes[0] & 0x3F | 0xC0
-    address_collection.append(address_bytes.hex())
-
-    return address_collection
-
-
 async def record_unfound_request(prefix: str, suffix: str):
     """
     Record unsuccessful key lookups for analysis.
@@ -574,10 +555,8 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
             logger.info(
                 f"Key File Not Found: {normalized_prefix} {normalized_suffix} (original: {request.address[:12]})")
             await record_unfound_request(normalized_prefix, normalized_suffix)
-            # Store original address variants for task list
-            address_collection = address_mutate(request.address[:12])
-            for address in address_collection:
-                storage.set(address, "")
+            # Seeker expands the first-two-MSB-equivalent variants internally.
+            storage.set(normalized_address, "")
             raise HTTPException(status_code=404, detail="Key File Not Found, added for task")
 
         # Get file handle for normalized address
@@ -591,10 +570,8 @@ async def get_public_key(request: PublicKeyRequest = PublicKeyRequest(address="1
         # Check if key exists
         if priv_key == b'\0' * 28:
             await record_unfound_request(normalized_prefix, normalized_suffix)
-            # Store original address variants for task list
-            address_collection = address_mutate(request.address[:12])
-            for address in address_collection:
-                storage.set(address, "")
+            # Seeker expands the first-two-MSB-equivalent variants internally.
+            storage.set(normalized_address, "")
             raise HTTPException(status_code=404, detail="Key Record Not Found, added for task")
 
         logger.debug(f"Private key found: {priv_key.hex()}")
@@ -1342,9 +1319,8 @@ async def add_search_task(prefix: PrefixRequest):
     Returns:
         dict: Status message indicating task was added
     """
-    address_collection = address_mutate(prefix.prefix)
-    for address in address_collection:
-        storage.set(address, "")
+    normalized_prefix = normalize_address(prefix.prefix)
+    storage.set(normalized_prefix, "")
 
     return {"message": "Task added"}
 

@@ -17,9 +17,9 @@
 
 // CUDA Kernel main function
 // Compute Secp224R1 keys and then check prefix
-// For the kernel, we use a 16 bits prefix lookup table which correspond to 2 bytes prefix for an uncompressed x
-// coordinate A second level lookup table contains 32 bits prefix (if used) (The CPU computes the full address and check
-// the full prefix)
+// For the kernel, we use a 16-bit prefix lookup table for the first two bytes of the uncompressed x coordinate.
+// When lookup32 is present, each 16-bit bucket contains value/mask pairs for exact GPU-side filtering of the
+// remaining requested bytes. CPU validation still recomputes and checks GPU-filtered candidates before output.
 //
 // We use affine coordinates for elliptic curve point (ie Z=1)
 

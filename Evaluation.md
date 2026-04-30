@@ -128,7 +128,7 @@ When rainbow tables don't contain your address, you'll need to initiate a new se
 
 ![add_search_task](images/add_search_task.png)
 
-By default, the C&C Server will automatically search equivalent prefixes/addresses. If the input is `aabbcc`, it will add the prefixes `2abbcc`, `6abbcc`, and `eabbcc`. This reduce the complexity from 2^48 to 2^46, in another words, 4x performance. Check `2abbcc.dat` to examine the database. Use the `/search-task` API to verify added prefixes, and modify existing ones through `storage.json`.
+By default, Seeker will automatically search equivalent prefixes/addresses. If the input is `aabbcc`, the C&C Server stores the normalized task `2abbcc`, and Seeker expands it internally to cover `2abbcc`, `6abbcc`, `aabbcc`, and `eabbcc`. This reduces the complexity from 2^48 to 2^46, in other words, 4x performance. Check `2abbcc.dat` to examine the database. Use the `/search-task` API to verify added prefixes, and modify existing ones through `storage.json`.
 
 ![search_task](images/search_task.png)
 
@@ -228,7 +228,7 @@ To have cnc_server distribute those executables, you will need to place them und
 
 ## Benchmarking
 
-You may start with benchmarking its performance by using this command.
+You may start with benchmarking its performance by using the same command used for project comparisons.
 
 ```bash
 # Assume you are under nRootTag
@@ -237,16 +237,27 @@ chmod +x ./executables/Seeker_CUDA_12
 ./executables/Seeker_CUDA_12 -t 0 -gpu -o /dev/null -p deadbe
 # -t 0 means don't use CPU to brute force
 # -gpu enables GPU search
-# -o save results to a file. Use /dev/null for preventing Disk I/O bottleneck
+# -o saves results to a file. Use /dev/null to prevent disk I/O from affecting the benchmark
 # -p enable public address search
-# deadbeef is the prefix to search.
+# deadbe is the prefix to search.
 ```
 
 
 
 ![runtimeStat](images/runtimeStat.png)
 
-In the screenshot above, you may observe the bottom line showing the status of the program. The time elapsed, current internal speed, average internal GPU speed, found items, current matching per second, average matching per second, respectively. Note, internal speed is not affected by the length or amount of prefix.
+In the screenshot above, you may observe the bottom line showing the status of the program: time elapsed, current internal speed, average internal GPU speed, found items, current matching per second, and average matching per second. For comparisons, use the reported average internal GPU speed. Note, internal speed is not affected by the length or amount of prefix.
+
+The prior RTX 4090 reference was about 8 Gkey/s. After the recent changes, the same benchmark method observed about **10 Gkey/s**. Observed RTX 4090 `-g x,y` tuning matrix, using the benchmark command above with public prefix `deadbe`:
+
+| `x` blocks | `y=128` | `y=192` | `y=256` | `y=384` | `y=512` |
+|------------|---------|---------|---------|---------|---------|
+| `1024`     | 8.91 Gkey/s | 9.48 Gkey/s | 9.28 Gkey/s | 9.75 Gkey/s | 9.40 Gkey/s |
+| `2048`     | 9.39 Gkey/s | 9.82 Gkey/s | 9.53 Gkey/s | 9.93 Gkey/s | 9.54 Gkey/s |
+| `4096`     | 9.56 Gkey/s | 10.00 Gkey/s | 9.76 Gkey/s | 10.05 Gkey/s | 9.61 Gkey/s |
+| `8192`     | 9.74 Gkey/s | 10.09 Gkey/s | 9.72 Gkey/s | 10.12 Gkey/s | 9.64 Gkey/s |
+
+Repeated stability measurement for `-g 4096,384` produced 9.7703, 9.7361, and 9.7230 Gkey/s, averaging 9.7431 Gkey/s with 0.25% relative standard deviation.
 
 **Note:** If you observe the performance is lower than our paper, we recommend to exit any running GPU intensive programs (e.g., Games, Wallpaper Engines, Screen Recording, etc.,). If you still observe a lower performance (e.g., 7.x Gkey/s on RTX4090 in screenshot), you may restart your workstation and retry. Cloud platforms may have GPU running at containers, which might be a factor of performance unsatisfactory.
 

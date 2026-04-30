@@ -9,9 +9,9 @@ a. Generate/Set Base Private Keys (one per GPU thread)
      * Thread offset: shifts left 80 bits
      * GPU ID offset: shifts left 112 bits
 
-    For instance, RTX 4090 may use Grid(4096x512), means:
-    - Grid Size: 4096 blocks x 512 threads per block
-    - Total Threads = 4096 * 512 = 2,097,152 threads
+    For instance, RTX 4090 may use Grid(4096x384), means:
+    - Grid Size: 4096 blocks x 384 threads per block
+    - Total Threads = 4096 * 384 = 1,572,864 threads
 
     Each thread:
     - Has its own unique starting point
@@ -20,14 +20,14 @@ a. Generate/Set Base Private Keys (one per GPU thread)
     - Gets unique thread ID = (blockIdx.x * blockDim.x) + threadIdx.x
     Where:
     - blockIdx.x ranges from 0 to 4095
-    - blockDim.x = 512
-    - threadIdx.x ranges from 0 to 511
+    - blockDim.x = 384
+    - threadIdx.x ranges from 0 to 383
 
     Example thread IDs:
-    - Block 0, Thread 0: (0 * 512) + 0 = 0
-    - Block 0, Thread 1: (0 * 512) + 1 = 1
-    - Block 1, Thread 0: (1 * 512) + 0 = 512
-    - Block 4095, Thread 511: (4095 * 512) + 511 = 2,097,151
+    - Block 0, Thread 0: (0 * 384) + 0 = 0
+    - Block 0, Thread 1: (0 * 384) + 1 = 1
+    - Block 1, Thread 0: (1 * 384) + 0 = 384
+    - Block 4095, Thread 383: (4095 * 384) + 383 = 1,572,863
 
 b. Convert to Base Public Keys
    For each thread:
@@ -99,9 +99,10 @@ Key points:
 a. Calculate actual private key:
    finalPrivateKey = basePrivateKey + increment
 
-b. Verify result (optional):
+b. Verify result:
    - Compute public key from final private key
-   - Check if it matches target prefix
+   - Check if it matches the target prefix
+   - For very short prefix-only searches, GPU bucket matching may be sufficient; for project-length prefixes, CPU validation remains the final correctness check
 
 c. Output/Store result:
    - Private key in hex format
@@ -121,7 +122,13 @@ This architecture takes advantage of:
 - Efficient modular arithmetic on GPU
 
 # GPU Performance Design
-GPU may generate too many keys per sec. For example, RTX 4090 may have 8 billion keys generated internally. However, when transfer it to host and compute for private key, the process is slown down. Therefore, the GPU employeed two byte filter using lookup table in GPU. When a byte or two bytes prefixes given, the GPU will firstly compare with the lookup table and discard mismatch, reduce pressure on transfer and CPU.
+GPU may generate too many keys per sec. For example, RTX 4090 can generate billions of keys per second internally. Transferring every candidate to the host and reconstructing private keys on CPU would become the bottleneck, so prefix filtering is performed on the GPU before candidates are copied back.
+
+For public-key prefix searches, Seeker first uses a 16-bit bucket lookup, then applies an exact value/mask comparison for the remaining requested bytes. The project target is at most 6 bytes, so the GPU can reject non-matching candidates for the full project prefix length. The first two MSBs of the public address are treated as equivalent for Attack-II; Seeker expands those four equivalent first-byte variants internally, while the server stores only the normalized task.
+
+CPU validation remains as a correctness guard. Only GPU-filtered candidates are transferred to CPU, where the private key is reconstructed from the thread ID and increment, and the public key is recomputed and checked before output/storage.
+
+The current optimized CUDA path also uses windowed modular inversion to reduce per-thread local-memory pressure, and the build caps CUDA register allocation with `-maxrregcount=112`. On RTX 4090, this is why `384` threads per block is now a better observed tuning point than the older `512`-thread guidance.
 
 
 ### Transfer Efficiency
@@ -238,8 +245,7 @@ calculate(A, B)
 Update Key Rate for the speed of which these are calculated since Secp224r1 does not have
 any known endomorphisms.
 
-GPU checking is offloaded entirely to the CPU in another thread so that it doesn't block the GPU thread
-from call the GPU.
+GPU prefix filtering is performed in CUDA. CPU validation and output handling run outside the kernel path so expensive private-key reconstruction and full public-key checks do not block GPU point generation more than necessary.
 
 Many of the same operations done as above, also ported over to GPU cuda.
 
@@ -273,8 +279,6 @@ known endomorphisms.
 For secp224r1, there might be some improvement to use 224/288 instead of 256/320 bit size.
 This would result in one less operation for each instruction set across addition, subtraction,
 and multiplication. CUDA emulates 64 bits operations, but this would increase code complexity.
-
-
 
 
 

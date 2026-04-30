@@ -44,7 +44,33 @@ make gpu=1 CCAP=89 CUDA=/usr/local/cuda-12.5 CXXCUDA=/usr/bin/g++ all
 - `-g` sets the gridSize in pairs. For example, the `1024,128` represents XX and YY. If you wish to use multiple GPUs concurrently, you need to set for each GPU. Assume you have two GPU, then `1024,128,2048,256` or `1024,128,2048,256`. gpu0x,gpu0y,gpu1x,gpu1y. We will discuss further in the next section.
 
 ### (GPU) Performance Tuning
-The parameter `-g` affects the performance significantly. The value shall adjust based on the GPU used accordingly, getting greedy on this value may downgrade the performance. The value may be adjusted if searching multiple prefixes concurrently. Assuming searching a three-byte prefix, our experiments show the optimal selection is `SM*32,512`. The SM (Streaming Multiprocessor) of each GPU can be found at (e.g. RTX4090) specification []() or third-party website [techpowerup](https://www.techpowerup.com/gpu-specs/geforce-rtx-4090.c3889).
+The parameter `-g` affects performance significantly. The value should be adjusted for the GPU and workload; larger values are not always faster and can reduce occupancy or increase scheduling pressure.
+
+For the current CUDA implementation on RTX 4090, local benchmarking of three-byte prefix search showed `-g 4096,384` as a stable default and `-g 8192,384` as a slightly faster candidate. The `384` thread count is intentional for the current windowed-inversion kernel; older `512`-thread guidance is no longer the preferred starting point. Re-benchmark on the target GPU if you change CUDA version, compiler flags, `-m`, or prefix workload.
+
+On this development branch, the prior RTX 4090 reference was **about 8 Gkey/s**, and the recent CUDA modifications boosted observed local performance to **about 9.74 Gkey/s stable, with single-run tuning up to about 10.12 Gkey/s**.
+
+To compare results consistently, use the same method as the main project benchmark:
+
+```bash
+# From the repository root, using the deployed executable.
+chmod +x ./executables/Seeker_CUDA_12
+./executables/Seeker_CUDA_12 -t 0 -gpu -o /dev/null -p deadbe
+
+# From executables/Seeker, using a local build.
+./Seeker -t 0 -gpu -o /dev/null -p deadbe
+```
+
+For `-g` tuning, keep the same benchmark command and vary only `-g`, for example:
+
+```bash
+./Seeker -t 0 -gpu -g 4096,384 -o /dev/null -p deadbe
+./Seeker -t 0 -gpu -g 8192,384 -o /dev/null -p deadbe
+```
+
+Compare the reported average internal GPU speed. The instantaneous speed is useful for sanity checking, but the average internal GPU speed is the value used for comparison. Writing to `/dev/null` avoids disk I/O bottlenecks.
+
+The SM (Streaming Multiprocessor) count of each GPU can be found from NVIDIA specifications or third-party databases such as [TechPowerUp](https://www.techpowerup.com/gpu-specs/geforce-rtx-4090.c3889).
 
 
 ## Information For Developers
