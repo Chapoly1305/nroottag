@@ -10,6 +10,7 @@ Our work uncovered a vulnerability in the Find My service that permitted all typ
 
 
 # Evaluation
+**This is the further performance-optimized development branch, ~25% faster compares original. For the original USENIX Security and DEF CON artifact branch, see `v1.0`.**
 
 The project forms a complete attack chain and depends on each component working together. The setup might be sophisticated, we thank you for your patience. The project contains the following components: **C&C Server**, **Database**, **Seeker**, and **Trojans** for Linux, Windows, and Android, respectively. Each component can be evaluated separately.
 
@@ -47,4 +48,3 @@ nRootTag uses GPL v3, inherits the license from the original projects. We apprec
 - [VanitySearch](https://github.com/JeanLucPons/VanitySearch) - GPL v3
 - [win-ble-cpp](https://github.com/urish/win-ble-cpp) - MIT
 - [Windows-universal-samples](https://github.com/microsoft/Windows-universal-samples) - MIT
-
