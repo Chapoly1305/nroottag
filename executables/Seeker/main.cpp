@@ -31,6 +31,26 @@ using namespace std;
 
 // ------------------------------------------------------------------------------------------
 
+static string formatSecp224CoordinateHex(const Int &value) {
+  Int tmp(&value);
+  string hex = tmp.GetBase16();
+  if (hex.length() < 56) {
+    hex.insert(0, 56 - hex.length(), '0');
+  }
+  return hex;
+}
+
+static string formatSecp224PublicKeyHex(const Point &pubKey, bool compressed) {
+  string xHex = formatSecp224CoordinateHex(pubKey.x);
+  if (compressed) {
+    return string(pubKey.y.IsEven() ? "02" : "03") + xHex;
+  }
+
+  return string("04") + xHex + formatSecp224CoordinateHex(pubKey.y);
+}
+
+// ------------------------------------------------------------------------------------------
+
 void printUsage() {
 
   printf("Seeker [-check] [-v] [-u] [-b] [-c] [-gpu] [-stop-all|-stop-any] [-i inputfile]\n");
@@ -405,7 +425,8 @@ int main(int argc, char *argv[]) {
         k.SetBase16(argv[a]);
       }
       Point p = secp->ComputePublicKey(&k);
-      printf("PubKey: %s\n", secp->GetPublicKeyHex(isComp, p).c_str());
+      printf("PubKey: %s\n", formatSecp224PublicKeyHex(p, isComp).c_str());
+      printf("PubKeyUncompressed: %s\n", formatSecp224PublicKeyHex(p, false).c_str());
       printf("Private Number: %s\n", k.GetBase10().c_str());
       printf("X: %s\n", p.x.GetBase10().c_str());
       printf("Y: %s\n", p.y.GetBase10().c_str());
