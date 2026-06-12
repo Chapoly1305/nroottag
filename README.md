@@ -8,6 +8,8 @@
 
 Our work uncovered a vulnerability in the Find My service that permitted all types of BLE addresses for advertising. Leveraging this flaw, we proposed a novel attack method, **nRootTag**, which transformed a computer into an ''AirTag'' tracker without requiring root privilege escalation.
 
+**⚠️ This repository is intended solely for academic research and responsible security analysis; users are solely responsible for complying with applicable laws and policies.
+nRootTag is not affiliated with or endorsed by Apple Inc.**
 
 # Evaluation
 
